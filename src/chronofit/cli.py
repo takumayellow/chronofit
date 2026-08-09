@@ -5,6 +5,7 @@
     python -m chronofit status               収集状況の確認
     python -m chronofit rollup               1日分を畳んで net/wall/離席に分ける
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
+    python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
     python -m chronofit coverage             所要時間DBに何が溜まっているか
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from . import config, paths
 from .collect import daemon
-from .estimate import curve, slack
+from .estimate import attribute, curve, slack
 from .estimate import db as estimate_db
 from .model import labels as labels_model
 from .model import rollup
@@ -215,6 +216,43 @@ def cmd_estimate(args):
     return 0
 
 
+def cmd_done(args):
+    """終わったタスクを1インスタンスとしてDBへ入れる。
+
+    人間が言うのは「これが終わった」だけでよい。かかった時間は L0 が既に
+    知っているので、--match でタイトルを指定すれば実測から拾う。
+    """
+    instances = _instances()
+    index = args.index or curve.next_index(instances, args.subject, args.kind)
+
+    net = args.net
+    wall = args.wall
+    sessions = 1
+    if net is None:
+        if not args.match:
+            print("--net か --match のどちらかが要る。時間の出どころを空にしない。",
+                  file=sys.stderr)
+            return 1
+        days = attribute.collect(paths.raw_dir(), args.match, args.since, args.until)
+        if not days:
+            print(f"'{args.match}' に一致するスパンが {args.since} 以降に無い。")
+            return 1
+        summed = attribute.totals(days)
+        net, wall, sessions = summed["net_hours"], summed["wall_hours"], summed["sessions"]
+        print(f"実測から集計: {summed['first']} - {summed['last']}  "
+              f"{sessions}日  net {net:.1f}h / 在席 {wall:.1f}h")
+        for title in summed["titles"][:5]:
+            print(f"    {title[:70]}")
+
+    row = estimate_db.make(args.subject, args.kind, args.target, index, net, wall,
+                           sessions, args.date or datetime.now().strftime("%Y-%m-%d"),
+                           source="chronofit" if args.match else "manual")
+    estimate_db.append(estimate_db.default_path(paths.data_root()), row)
+    print(f"{args.subject} {args.kind} {args.target} = {index}本目  "
+          f"net {row['net_hours']}h を記録")
+    return 0
+
+
 def cmd_backfill_clockify(args):
     entries = clockify.read_normalized(args.csv)
     report = clockify.summarize(entries)
@@ -266,6 +304,20 @@ def build_parser():
     est.add_argument("--assumed", type=float, help="実績も流用元も無い場合に置く仮値 時間")
     est.add_argument("--day-type", default="平日", help="暦時間へ直すときの日タイプ")
     est.set_defaults(func=cmd_estimate)
+
+    done = sub.add_parser("done", help="終わったタスクを所要時間DBへ入れる")
+    done.add_argument("subject", help="科目")
+    done.add_argument("kind", help="種別")
+    done.add_argument("target", help="対象（2024年度期末 など）")
+    done.add_argument("--match", help="タイトルの正規表現。実測から時間を拾う")
+    done.add_argument("--since", default=datetime.now().strftime("%Y-%m-%d"),
+                      help="実測を拾い始める日 YYYY-MM-DD（既定は今日）")
+    done.add_argument("--until", help="実測を拾い終える日 YYYY-MM-DD（既定は今日）")
+    done.add_argument("--net", type=float, help="net 時間を直接指定する（実測が無い場合）")
+    done.add_argument("--wall", type=float, help="在席時間を直接指定する")
+    done.add_argument("--index", type=int, help="何本目か（既定は実績の次）")
+    done.add_argument("--date", help="完了日 YYYY-MM-DD")
+    done.set_defaults(func=cmd_done)
 
     slack_cmd = sub.add_parser("slack", help="日タイプごとの slack 率")
     slack_cmd.set_defaults(func=cmd_slack)
