@@ -35,6 +35,9 @@ DEFAULTS = {
     # ウィンドウタイトル -> (科目, 種別) の対応。利用側が入れる。
     # 例: {"match": "応用数学A.*\\.pdf", "subject": "応用数学A", "kind": "過去問"}
     "title_rules": [],
+    # URL/タイトル -> (科目, 種別) または (カテゴリ)。ブラウザ履歴の分類に使う。
+    # 例: {"match": "atcoder\\.jp", "subject": "AtCoder", "kind": "精進"}
+    "url_rules": [],
     # 日タイプの判定。slack 率は日タイプごとに違うので分けて集計する。
     "day_types": {"weekend": [5, 6]},
     # 種別 -> モード（series / oneoff / habit）。どの種別がどれかは科目構成で

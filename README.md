@@ -45,6 +45,18 @@ chronofit は在席時間（`wall`）と実際に入力があった時間（`net
 という並びになるからである。当たったブロックは Enter 1打で確定し、手で科目を打つのは
 「PC を一度も触らずに紙だけで進めた」ぶんだけになる。**開始を宣言する操作は最後まで要らない。**
 
+### 繰り返さない仕事はどう扱うか
+
+学習曲線が意味を持つのは、同じことを繰り返す仕事だけである。種別を3モードに分ける。
+
+| モード | 例 | 扱い |
+|---|---|---|
+| `series` | 過去問・参考書の章 | 通し番号で学習曲線を当てる（既定） |
+| `oneoff` | レポート・環境構築・事務 | 中央値と p80（分布が右に伸びるので平均を使わない） |
+| `habit` | ピアノ・毎日の精進 | **見積もらない。容量から引く**（`capacity`） |
+
+モードは行に焼いて保存する。後から設定を変えても、測り終えた行の解釈は変わらない。
+
 ## 使い方
 
 ```bash
@@ -57,10 +69,16 @@ python -m chronofit status      # 収集できているかの確認
 python -m chronofit rollup      # 1日分を畳んで net / wall / 離席に分ける
 python -m chronofit label       # 15分以上の離席ブロックにラベルを付ける
 
+# 終わったら所要時間DBへ入れる
+python -m chronofit done 応用数学B 過去問 --match 2024   # PC作業ぶんを実測から
+python -m chronofit done 応用数学B 過去問 --offpc        # 紙でやったぶんを離席ラベルから
+
 # 予定を立てるとき
 python -m chronofit estimate 応用数学B 過去問   # (科目, 種別, 何本目) の見積もり
 python -m chronofit slack                       # 日タイプごとの slack 率
+python -m chronofit capacity --days 30          # 暦 - 習慣 = 割り当て可能な時間
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
+python -m chronofit history --days 14           # ブラウザ履歴を分類して過去を埋める
 
 python -m chronofit backfill-clockify <csv>     # 過去の Clockify エクスポートを取り込む
 ```

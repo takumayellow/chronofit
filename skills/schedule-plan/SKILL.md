@@ -23,6 +23,17 @@ description: タスク集合を受け取り、chronofit の実測DBから所要�
 「応用数学B 過去問 2024年度期末（3本目）」まで落とす。**通し番号が要**で、これが無いと
 1本目の重さと5本目の軽さが混ざって、どちらの予定にも使えない数字になる。
 
+そのうえで、種別を**3モードのどれか**に振り分ける。振り分けを間違えると見積もりが壊れる。
+
+| モード | 当てはまるもの | 扱い |
+|---|---|---|
+| `series` | 過去問・参考書の章・演習 | 通し番号で学習曲線を当てる（既定） |
+| `oneoff` | レポート・環境構築・事務・調査 | 通し番号に意味が無い。中央値と p80 |
+| `habit` | ピアノ・毎日の精進 | **見積もらない。容量から引く** |
+
+`habit` を needs 側に積むと「毎日2時間 × 33日 = 66時間のタスク」という無意味な数字が出る。
+毎日やるものは需要ではなく容量の目減りとして扱う。振り分けは private 側の `kind_modes` に持つ。
+
 ### 2. 実測DBを引く
 
 ```bash
@@ -60,6 +71,10 @@ python -m chronofit slack     # 日タイプごとの slack 率（平日 / 休�
 
 ### 4. 使える時間へ割り付ける
 
+```bash
+python -m chronofit capacity --days N     # 暦 - 習慣 = 割り当て可能。slack 率があれば実作業ぶんまで
+```
+
 - 容量は**暦時間**で持つ。カレンダーの既存予定・出社日・固定の拘束を先に引く。
 - 締切のあるものから earliest-fit。締切は課題管理（Jira 等）の due date を正とする。
 - 1日に詰め込みすぎない。実測の日次上限を超える配置はしない。
@@ -90,6 +105,15 @@ python -m chronofit status                  # 収集が動いているか
 python -m chronofit rollup --date YYYY-MM-DD
 python -m chronofit label                   # 未ラベルの離席ブロックを潰す（数十秒）
 python -m chronofit slack                   # slack 率の更新を見る
+python -m chronofit history --days 7        # ブラウザ履歴の分類。未分類が重いドメインは規則へ写す
+```
+
+終わったタスクは所要時間DBへ入れる。紙でやったものは離席ラベルから拾える:
+
+```bash
+python -m chronofit done <科目> <種別> --match <対象>   # PC作業ぶんを実測から
+python -m chronofit done <科目> <種別> --offpc          # 紙でやったぶんを離席ラベルから
+python -m chronofit done <科目> <種別> --net 5400       # どちらでも取れないときだけ手入力
 ```
 
 1. 計画とのズレを見る。**ズレたら計画を直す。自分を責める材料にしない**
