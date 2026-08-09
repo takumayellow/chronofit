@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# 生イベント・スナップショット（個人データ。絶対にコミットしない）
+.testdata/
+data/
+*.sqlite
+*.jsonl
+.env
