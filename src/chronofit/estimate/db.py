@@ -9,8 +9,8 @@ JSONL で持つのは、追記しかしない・行単位で人が読める・�
 """
 import json
 
-FIELDS = ("subject", "kind", "target", "index", "net_hours", "wall_hours",
-          "sessions", "date", "source")
+FIELDS = ("subject", "kind", "target", "index", "mode", "units",
+          "net_hours", "wall_hours", "sessions", "date", "source")
 
 
 def default_path(data_root):
@@ -41,10 +41,17 @@ def append(path, row):
 
 
 def make(subject, kind, target, index, net_hours, wall_hours=None,
-         sessions=1, date=None, source="chronofit"):
-    """1インスタンスを組み立てる。wall が無ければ net と同じとみなす。"""
+         sessions=1, date=None, source="chronofit", mode="series", units=None):
+    """1インスタンスを組み立てる。wall が無ければ net と同じとみなす。
+
+    `mode` は種別の扱い（series / oneoff / habit）で、行に焼いておく。後から設定を
+    変えても、既に測った行がどういうつもりで測られたかは変わらないため。
+    `units` は量（ページ数・問題数など）。1単位あたりの速度が出ると、残りの章から
+    残り時間が引けるようになる。
+    """
     return {
         "subject": subject, "kind": kind, "target": target, "index": index,
+        "mode": mode, "units": units,
         "net_hours": round(net_hours, 2),
         "wall_hours": round(wall_hours if wall_hours is not None else net_hours, 2),
         "sessions": sessions, "date": date, "source": source,
@@ -57,6 +64,7 @@ def coverage(rows):
     for row in rows:
         key = (row["subject"], row["kind"])
         entry = table.setdefault(key, {"subject": row["subject"], "kind": row["kind"],
+                                       "mode": row.get("mode", "series"),
                                        "count": 0, "max_index": 0, "net_hours": 0.0})
         entry["count"] += 1
         entry["max_index"] = max(entry["max_index"], row["index"])

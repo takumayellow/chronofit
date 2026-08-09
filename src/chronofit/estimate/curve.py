@@ -61,8 +61,14 @@ def predict(model, n):
 
 
 def _points(instances, subject=None, kind=None):
+    """曲線に使えるのは series の行だけ。
+
+    一点物や習慣の行を混ぜると、通し番号が単なる連番でしかないのに逓減として
+    読まれてしまう。モードは行に焼いてあるので、ここで弾く。
+    """
     return [(row["index"], row["net_hours"]) for row in instances
             if row.get("net_hours", 0) > 0
+            and row.get("mode", "series") == "series"
             and (subject is None or row.get("subject") == subject)
             and (kind is None or row.get("kind") == kind)]
 

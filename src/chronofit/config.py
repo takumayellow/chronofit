@@ -20,10 +20,12 @@ from . import paths
 
 # 離席ブロックに付けるラベルの選択肢。1日の終わりにキー1打で潰せるよう5つに絞る。
 # 選択肢を増やすほど1本あたりの逡巡が増え、続かなくなる。
+# `study: true` の選択肢を選んだときだけ、科目と対象を追加で聞く。オフPC作業の
+# 中身が要るのは所要時間DBへ入れるときだけなので、他の離席では一切聞かない。
 DEFAULT_AWAY_CATEGORIES = [
     {"key": "1", "label": "移動・身支度"},
     {"key": "2", "label": "食事・休憩"},
-    {"key": "3", "label": "オフPC作業"},
+    {"key": "3", "label": "オフPC作業", "study": True},
     {"key": "4", "label": "睡眠"},
     {"key": "5", "label": "その他"},
 ]
@@ -35,6 +37,15 @@ DEFAULTS = {
     "title_rules": [],
     # 日タイプの判定。slack 率は日タイプごとに違うので分けて集計する。
     "day_types": {"weekend": [5, 6]},
+    # 種別 -> モード（series / oneoff / habit）。どの種別がどれかは科目構成で
+    # 変わるので、ここには表を持たない。既定は series。
+    "kind_modes": {},
+    # 毎日決まって取る時間。タスクではなく容量から引くもの。
+    # 例: {"name": "ピアノ", "hours_per_day": 2.0}
+    "habits": [],
+    # オフPC作業のラベル2段目で1打で選べる組み合わせ。
+    # 例: {"key": "1", "subject": "情報理論", "kind": "参考書"}
+    "study_presets": [],
 }
 
 
@@ -60,3 +71,9 @@ def load():
 def away_categories(config=None):
     categories = (config or load()).get("away_categories") or DEFAULT_AWAY_CATEGORIES
     return [c for c in categories if c.get("key") and c.get("label")]
+
+
+def study_presets(config=None):
+    """オフPC作業のラベル2段目の選択肢。"""
+    presets = (config or load()).get("study_presets") or []
+    return [p for p in presets if p.get("key") and p.get("subject")]

@@ -176,7 +176,9 @@ def merge_labels(summary, labels):
     ラベルは作り直せないため、同じファイルに混ぜない。
     """
     for block in summary["away_blocks"]:
-        block["label"] = labels.get(block["start"].isoformat(timespec="seconds"))
+        entry = labels.get(block["start"].isoformat(timespec="seconds"))
+        block["label"] = entry.get("label") if isinstance(entry, dict) else entry
+        block["detail"] = entry if isinstance(entry, dict) else None
     return summary
 
 

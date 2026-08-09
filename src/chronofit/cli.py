@@ -8,6 +8,7 @@
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
+    python -m chronofit capacity             習慣を引いた、実際に割り当てられる時間
     python -m chronofit coverage             所要時間DBに何が溜まっているか
     python -m chronofit backfill-clockify F  過去の Clockify CSV を取り込む
 """
@@ -20,8 +21,9 @@ from pathlib import Path
 
 from . import config, paths
 from .collect import daemon
-from .estimate import attribute, curve, slack
+from .estimate import attribute, curve, kinds, offpc, slack
 from .estimate import db as estimate_db
+from .model import context as context_model
 from .model import labels as labels_model
 from .model import rollup
 from .sources import browser, clockify
@@ -147,18 +149,25 @@ def cmd_label(args):
 
     settings = config.load()
     weekend = tuple(settings.get("day_types", {}).get("weekend", (5, 6)))
+    # 離席の中身は両隣の前景から当たる。人間に聞くのは、両隣にも手掛かりが
+    # 無かったぶんだけになる。
+    context_model.annotate(summary, settings.get("title_rules") or [])
     defaults = labels_model.build_defaults(paths.label_dir(), weekend)
     pending = labels_model.unlabeled(summary)
+    presets = config.study_presets(settings)
 
     answers = ask.ask_blocks(
         pending,
         config.away_categories(settings),
-        lambda block: labels_model.suggest(block, defaults, weekend))
+        lambda block: labels_model.suggest(block, defaults, weekend),
+        detail_for=lambda block: ask.ask_detail(presets, block.get("guess")))
     if not answers:
         return 0
 
+    by_start = {block["start"].isoformat(timespec="seconds"): block for block in pending}
     stored = labels_model.load(date, paths.label_dir())
-    stored.update(answers)
+    for start, (label, detail) in answers.items():
+        stored[start] = labels_model.make_entry(by_start[start], label, detail)
     labels_model.save(date, paths.label_dir(), stored)
     print(f"\n{len(answers)}本を記録 -> {labels_model.path_for(date, paths.label_dir())}")
     return 0
@@ -193,19 +202,66 @@ def cmd_coverage(args):
     return 0
 
 
-def cmd_estimate(args):
-    """1インスタンスの見積もり。根拠を必ず一緒に出す。"""
-    instances = _instances()
-    index = args.index or curve.next_index(instances, args.subject, args.kind)
-    result = curve.estimate(instances, args.subject, args.kind, index, args.assumed)
+def cmd_capacity(args):
+    """習慣を引いた、実際にタスクへ割り当てられる時間。
 
-    print(f"{args.subject} {args.kind} {index}本目")
+    毎日決まって取るもの（ピアノなど）をタスクとして積むと需要が膨らんで見えるが、
+    実際に起きているのは1日の使える時間が減ることだけなので、ここで先に引く。
+    """
+    settings = config.load()
+    entries = kinds.habits(settings)
+    if not entries:
+        print("習慣が設定されていない（config の habits が空）。")
+    for habit in entries:
+        print(f"  -{habit['hours_per_day']:.1f}h/日  {habit['name']}")
+
+    available = kinds.available_hours(args.hours, settings)
+    print(f"暦 {args.hours:.1f}h/日 - 習慣 {kinds.habit_hours_per_day(settings):.1f}h "
+          f"= 割り当て可能 {available:.1f}h/日")
+
+    bucket = _slack_buckets(settings).get(args.day_type)
+    if bucket and bucket["ratio"]:
+        print(f"  うち実作業に落ちるのは {available * bucket['ratio']:.1f}h/日 "
+              f"({args.day_type} の slack率 {bucket['ratio']:.0%}, {bucket['days']}日分の実測)")
+    else:
+        print(f"  {args.day_type} の slack 率がまだ無いので、実作業ぶんは出せない")
+
+    if args.days:
+        print(f"  {args.days}日ぶんで {available * args.days:.0f}h")
+    return 0
+
+
+def cmd_estimate(args):
+    """1インスタンスの見積もり。根拠を必ず一緒に出す。
+
+    種別によって見積もり方を変える。繰り返して速くなるものにしか学習曲線は
+    当たらないし、習慣にはそもそも見積もりが要らない（`estimate/kinds.py`）。
+    """
+    settings = config.load()
+    instances = _instances()
+    mode = kinds.mode_for(args.kind, settings)
+
+    if mode == kinds.HABIT:
+        print(f"{args.kind} は習慣。見積もらず容量から引く -> chronofit capacity")
+        return 0
+
+    if mode == kinds.ONEOFF:
+        index = None
+        result = kinds.estimate_oneoff(instances, args.subject, args.kind, args.assumed)
+        print(f"{args.subject} {args.kind}（一点物）")
+    else:
+        index = args.index or curve.next_index(instances, args.subject, args.kind)
+        result = curve.estimate(instances, args.subject, args.kind, index, args.assumed)
+        print(f"{args.subject} {args.kind} {index}本目")
+
     if result["hours"] is None:
         print(f"  見積もれない: {result['note']}")
         return 1
     print(f"  net {result['hours']:.1f}h  [{result['basis']}] {result['note']}")
+    if result.get("median") is not None and result["median"] != result["hours"]:
+        print(f"  （中央値 {result['median']:.1f}h。予定には p80、見通しには中央値を使う）")
 
-    buckets = _slack_buckets(config.load())
+    buckets = _slack_buckets(settings)
     bucket = buckets.get(args.day_type)
     if bucket and bucket["ratio"]:
         hours = slack.calendar_hours(result["hours"], bucket["ratio"])
@@ -220,33 +276,51 @@ def cmd_done(args):
     """終わったタスクを1インスタンスとしてDBへ入れる。
 
     人間が言うのは「これが終わった」だけでよい。かかった時間は L0 が既に
-    知っているので、--match でタイトルを指定すれば実測から拾う。
+    知っているので、--match でタイトルを指定すれば実測から拾う。紙で進めた
+    ぶんは --offpc でラベルから拾う（長さは離席ブロックが持っている）。
     """
+    settings = config.load()
     instances = _instances()
+    mode = kinds.mode_for(args.kind, settings)
     index = args.index or curve.next_index(instances, args.subject, args.kind)
 
     net = args.net
     wall = args.wall
+    units = args.units
     sessions = 1
+    source = "manual"
     if net is None:
-        if not args.match:
-            print("--net か --match のどちらかが要る。時間の出どころを空にしない。",
+        if args.offpc:
+            days = offpc.collect(paths.label_dir(), args.subject, args.kind,
+                                 args.target, args.since, args.until)
+            summed = offpc.totals(days)
+            if summed is None:
+                print(f"{args.subject}/{args.kind}/{args.target} のオフPC記録が "
+                      f"{args.since} 以降に無い。")
+                return 1
+            source = "offpc"
+        elif args.match:
+            days = attribute.collect(paths.raw_dir(), args.match, args.since, args.until)
+            if not days:
+                print(f"'{args.match}' に一致するスパンが {args.since} 以降に無い。")
+                return 1
+            summed = attribute.totals(days)
+            source = "chronofit"
+        else:
+            print("--net / --match / --offpc のどれかが要る。時間の出どころを空にしない。",
                   file=sys.stderr)
             return 1
-        days = attribute.collect(paths.raw_dir(), args.match, args.since, args.until)
-        if not days:
-            print(f"'{args.match}' に一致するスパンが {args.since} 以降に無い。")
-            return 1
-        summed = attribute.totals(days)
+
         net, wall, sessions = summed["net_hours"], summed["wall_hours"], summed["sessions"]
+        units = units or summed.get("units")
         print(f"実測から集計: {summed['first']} - {summed['last']}  "
               f"{sessions}日  net {net:.1f}h / 在席 {wall:.1f}h")
-        for title in summed["titles"][:5]:
+        for title in (summed.get("titles") or [])[:5]:
             print(f"    {title[:70]}")
 
     row = estimate_db.make(args.subject, args.kind, args.target, index, net, wall,
                            sessions, args.date or datetime.now().strftime("%Y-%m-%d"),
-                           source="chronofit" if args.match else "manual")
+                           source=source, mode=mode, units=units)
     estimate_db.append(estimate_db.default_path(paths.data_root()), row)
     print(f"{args.subject} {args.kind} {args.target} = {index}本目  "
           f"net {row['net_hours']}h を記録")
@@ -310,6 +384,9 @@ def build_parser():
     done.add_argument("kind", help="種別")
     done.add_argument("target", help="対象（2024年度期末 など）")
     done.add_argument("--match", help="タイトルの正規表現。実測から時間を拾う")
+    done.add_argument("--offpc", action="store_true",
+                      help="紙で進めたぶん。離席ブロックのラベルから時間を拾う")
+    done.add_argument("--units", type=int, help="こなした量（問数・ページ数など）")
     done.add_argument("--since", default=datetime.now().strftime("%Y-%m-%d"),
                       help="実測を拾い始める日 YYYY-MM-DD（既定は今日）")
     done.add_argument("--until", help="実測を拾い終える日 YYYY-MM-DD（既定は今日）")
@@ -321,6 +398,13 @@ def build_parser():
 
     slack_cmd = sub.add_parser("slack", help="日タイプごとの slack 率")
     slack_cmd.set_defaults(func=cmd_slack)
+
+    capacity = sub.add_parser("capacity", help="習慣を引いた割り当て可能時間")
+    capacity.add_argument("--hours", type=float, default=16.0,
+                          help="1日の暦時間（睡眠を除いた素の持ち時間）")
+    capacity.add_argument("--days", type=int, help="この日数ぶんの合計も出す")
+    capacity.add_argument("--day-type", default="平日", help="slack 率を引く日タイプ")
+    capacity.set_defaults(func=cmd_capacity)
 
     coverage = sub.add_parser("coverage", help="所要時間DBの中身")
     coverage.set_defaults(func=cmd_coverage)

@@ -17,6 +17,42 @@ SLOT_MINUTES = 30      # 既定値を引くときの時間帯の粒度
 MIN_SAMPLES = 2        # これ以上同じ答えが出た時間帯だけ既定値にする
 
 
+def label_of(entry):
+    """記録からラベル文字列だけ取り出す。
+
+    初期は `{開始時刻: "ラベル"}` の文字列だけだった。オフPC作業に科目と対象を
+    持たせる必要が出たので辞書に広げてある。読む側は両方受ける。
+    """
+    if isinstance(entry, dict):
+        return entry.get("label")
+    return entry
+
+
+def detail_of(entry):
+    """オフPC作業の中身（科目・種別・対象）。持っていなければ None。"""
+    if isinstance(entry, dict) and entry.get("subject"):
+        return {k: entry.get(k) for k in ("subject", "kind", "target", "units")}
+    return None
+
+
+def make_entry(block, label, detail=None):
+    """1ブロック分の記録を組み立てる。
+
+    長さをここに焼くのは、後からオフPC作業の実測を引くときに、ロールアップを
+    作り直さなくても済むようにするため。ラベルは作り直せないが長さは何度でも
+    作り直せる — にもかかわらず一緒に持つのは、この2つが常に一緒に使われるから。
+    """
+    entry = {
+        "label": label,
+        "end": block["end"].isoformat(timespec="seconds"),
+        "sec": round(block["sec"], 1),
+    }
+    for key, value in (detail or {}).items():
+        if value:
+            entry[key] = value
+    return entry
+
+
 def path_for(date, root):
     return root / f"{date}.json"
 
@@ -60,7 +96,8 @@ def build_defaults(root, weekend_days=(5, 6), min_samples=MIN_SAMPLES):
             entries = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-        for start, label in entries.items():
+        for start, entry in entries.items():
+            label = label_of(entry)
             if not label:
                 continue
             try:
