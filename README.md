@@ -39,14 +39,50 @@ chronofit は在席時間（`wall`）と実際に入力があった時間（`net
 ## 使い方
 
 ```bash
+# 収集（放っておく側）
 python -m chronofit collect     # 端末イベントの収集（常駐。ログオン時に自動起動させる）
 python -m chronofit snapshot    # ブラウザ履歴を退避（Chromium は勝手に刈るので日次で）
 python -m chronofit status      # 収集できているかの確認
-python -m chronofit backfill-clockify <csv>   # 過去の Clockify エクスポートを取り込む
+
+# 1日1回（人が触る唯一の場所。数十秒）
+python -m chronofit rollup      # 1日分を畳んで net / wall / 離席に分ける
+python -m chronofit label       # 15分以上の離席ブロックにラベルを付ける
+
+# 予定を立てるとき
+python -m chronofit estimate 応用数学B 過去問   # (科目, 種別, 何本目) の見積もり
+python -m chronofit slack                       # 日タイプごとの slack 率
+python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
+
+python -m chronofit backfill-clockify <csv>     # 過去の Clockify エクスポートを取り込む
+```
+
+Windows なら自動起動の登録まで一発で済む（管理者権限は不要）:
+
+```powershell
+pip install -e .
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-tasks.ps1
 ```
 
 `snapshot` は日次で回すこと。実測で Vivaldi の履歴は **16日分しか残っていなかった**。
 写しておかないと過去の接点ログは取り返しがつかない形で消える。
+
+## 見積もりの出し方
+
+`estimate` は3段で答え、**どの段で出したかを必ず返す**。
+
+| 根拠 | 意味 |
+|---|---|
+| `実測` | その (科目, 種別) の実績から学習曲線を当てた |
+| `流用` | 同じ種別の他科目の曲線を借りた |
+| `仮` | 実績も流用元も無い。仮値を渡さなければ**数字を出さない** |
+
+根拠の無い数字を実測の顔で予定に入れないため、値と根拠は常に一緒に持ち回る。
+該当する日タイプの slack 率がまだ無ければ、暦時間への換算もしない。
+
+## スキル
+
+`skills/schedule-plan/` は Claude Code のスキルとして呼び出せる。
+`~/.claude/skills/` から junction を張れば、リポジトリで版管理したまま使える。
 
 ## データの置き場所
 
