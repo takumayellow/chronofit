@@ -5,6 +5,7 @@
     python -m chronofit history              退避した履歴を日ごと・分類ごとに見る
     python -m chronofit status               収集状況の確認
     python -m chronofit rollup               1日分を畳んで net/wall/離席に分ける
+    python -m chronofit report               1日の測定結果を HTML にして開く
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
@@ -31,7 +32,7 @@ from .model import context as context_model
 from .model import labels as labels_model
 from .model import rollup
 from .sources import browser, clockify, history
-from .ui import ask
+from .ui import ask, report
 
 
 def cmd_collect(args):
@@ -145,11 +146,19 @@ def _resolve_date(value):
 
     `today` / `yesterday` を受けるのは、タスクスケジューラが日付を計算できないため。
     「前日ぶんを毎晩畳む」を人手ゼロで回すには、日付側が相対語を解せる必要がある。
+
+    形を厳しく見るのは、この戻り値が**そのままファイル名になる**ため。`2026-8-9` の
+    ような書き方を通すと、同じ日のロールアップが別ファイルに散る。
     """
     relative = {"today": 0, "yesterday": 1}
     if value in relative:
         return (datetime.now() - timedelta(days=relative[value])).strftime("%Y-%m-%d")
-    return value or datetime.now().strftime("%Y-%m-%d")
+    if not value:
+        return datetime.now().strftime("%Y-%m-%d")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        raise SystemExit(f"日付は YYYY-MM-DD / today / yesterday で書く: {value}")
 
 
 def _load_summary(date):
@@ -600,6 +609,80 @@ def cmd_daily(args):
     return cmd_board(board_args) or failed
 
 
+def _open_file(path):
+    """既定のアプリで開く。開けなくても、書き出し自体は成功として扱う。
+
+    `os.startfile` を使うのは、Git Bash から `cmd //c start` を呼ぶ経路が
+    引数変換で壊れやすいため（同じ理由で `explorer` の戻り値も当てにしない）。
+    """
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(str(path))            # noqa: S606 - Windows 既定の関連付け
+        else:
+            import webbrowser
+            webbrowser.open(path.as_uri())
+        return True
+    except OSError as error:
+        print(f"開けなかった（ファイルはある）: {error}", file=sys.stderr)
+        return False
+
+
+def _board_for(date, settings, tasks_path=None):
+    """レポートに載せる進捗と、それが「いつ時点の値か」。
+
+    過去の日のページに今日の残量を載せると、タイムライン（その日）と進捗（今）が
+    同じ紙面で食い違う。`board/<date>.json` はまさに「その日に見えていた残量」なので、
+    在るならそれを使う。無ければ数え直すしかないが、その旨を画面に書く（DBは
+    「いつ終わったか」を持たないので、過去の done 本数は再現できない）。
+    """
+    snapshot = paths.board_dir() / f"{date}.json"
+    if date != datetime.now().strftime("%Y-%m-%d") and snapshot.is_file():
+        data = json.loads(snapshot.read_text(encoding="utf-8"))
+        return data.get("rows") or [], data.get("summary"), f"{date} 時点の記録"
+
+    task_list = _tasks(tasks_path)
+    if not task_list:
+        return [], None, None
+    rows = board.rows(task_list, _instances(), settings,
+                      datetime.strptime(date, "%Y-%m-%d").date())
+    as_of = None if date == datetime.now().strftime("%Y-%m-%d") else "いま数え直した値"
+    return board.order(rows), board.summarize(rows), as_of
+
+
+def cmd_report(args):
+    """1日の測定結果を1枚の HTML にして開く。
+
+    標準出力は流れて消えるので、「今日はどうだったか」を見返す面をファイルとして
+    残す。中身は生タイトルを含むため、置き場所は data_root() の下に固定する。
+    """
+    date = _resolve_date(args.date)
+    summary = _load_summary(date)
+    if summary is None:
+        print(f"{date} の生ログが無い。")
+        return 1
+
+    settings = config.load()
+    # 離席の中身は両隣の前景から当たる。ラベルを付けていない日でも、
+    # 「何の前後で離れたか」だけは見えるようにする。
+    context_model.annotate(summary, settings.get("title_rules") or [])
+
+    rows, board_summary, as_of = _board_for(date, settings, args.tasks)
+    sources = [
+        ("この日の生スパン（1行1スパン・タイトル込み）", paths.raw_dir() / f"{date}.jsonl"),
+        ("畳んだ集計（共有できる粒度・タイトルは入らない）", paths.rollup_dir() / f"{date}.json"),
+        ("離席に付けたラベル", paths.label_dir() / f"{date}.json"),
+        ("やることの一覧", paths.tasks_path()),
+        ("その日に見えていた残量", paths.board_dir() / f"{date}.json"),
+        ("所要時間DB（終わったタスクの実測）", estimate_db.default_path(paths.data_root())),
+    ]
+    content = report.render(summary, date, rows, board_summary, sources, as_of)
+    destination = report.write(paths.ensure(paths.report_dir()) / f"{date}.html", content)
+    print(f"-> {destination}")
+    if not args.no_open:
+        _open_file(destination)
+    return 0
+
+
 def cmd_backfill_clockify(args):
     entries = clockify.read_normalized(args.csv)
     report = clockify.summarize(entries)
@@ -708,6 +791,12 @@ def build_parser():
     board_cmd.add_argument("--workday-hours", type=float, default=3.0)
     board_cmd.add_argument("--window", type=int, default=14)
     board_cmd.set_defaults(func=cmd_board)
+
+    report_cmd = sub.add_parser("report", help="1日の測定結果を HTML にして開く")
+    report_cmd.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は今日）")
+    report_cmd.add_argument("--tasks", type=Path, help="別のタスク定義を使う")
+    report_cmd.add_argument("--no-open", action="store_true", help="書き出すだけで開かない")
+    report_cmd.set_defaults(func=cmd_report)
 
     daily = sub.add_parser("daily", help="前日を畳んで進捗を残す（毎晩の自動実行用）")
     daily.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は前日）")

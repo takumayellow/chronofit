@@ -65,6 +65,15 @@ def board_dir():
     return data_root() / "board"
 
 
+def report_dir():
+    """1日の姿を見るための HTML。
+
+    生タイトルをそのまま載せるので、ここも git の外に置く。共有できる粒度は
+    `rollup_dir()` のほうで、こちらは**自分が見るための面**だと割り切る。
+    """
+    return data_root() / "report"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)

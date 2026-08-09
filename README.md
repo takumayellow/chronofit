@@ -106,6 +106,10 @@ python -m chronofit rollup      # 1日分を畳んで net / wall / 離席に分�
 python -m chronofit label       # 15分以上の離席ブロックにラベルを付ける
 python -m chronofit daily       # 前日を畳んで進捗を残す（毎晩自動で走る。手では要らない）
 
+# 見返すとき
+python -m chronofit report                 # 今日の1日を HTML にして開く
+python -m chronofit report --date 2026-08-08 --no-open   # 別の日・開かずに書き出すだけ
+
 # 終わったら所要時間DBへ入れる
 python -m chronofit done 応用数学B 過去問 --match 2024   # PC作業ぶんを実測から
 python -m chronofit done 応用数学B 過去問 --offpc        # 紙でやったぶんを離席ラベルから
@@ -175,6 +179,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 
 生イベントは「今まで開いた全ウィンドウの題名」なので、private リポジトリにも置かない。
 `CHRONOFIT_HOME` で置き場所を上書きできる。
+
+`%LOCALAPPDATA%\chronofit\` の中身:
+
+| ファイル | 中身 | 作り直せるか |
+|---|---|---|
+| `raw/<date>.jsonl` | 1行1スパンの生ログ（タイトル込み） | **できない**（測り直せない） |
+| `rollup/<date>.json` | 畳んだ集計。タイトルは入らない | できる |
+| `labels/<date>.json` | 離席に人が付けたラベル | **できない**（人しか知らない） |
+| `report/<date>.html` | 1日の分析画面。生タイトルを含む | できる |
+| `tasks.json` | やることの一覧 | 手で書いたもの |
+| `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
+| `instances.jsonl` | 所要時間DB（終わったタスクの実測。`done` を打つまで出来ない） | できる |
+| `config.json` | 個人設定（科目名・分類ルール・容量） | 手で書いたもの |
+
+`report` が生タイトルを載せるのは、**自分が見るための面**だから。共有できる粒度は
+`rollup/` のほうで、そちらには意図的にタイトルを入れていない。
 
 このリポジトリには個人固有の定数（科目名・容量・分類ルール）を一切置かない。
 それらは利用側から設定として注入する。
