@@ -65,18 +65,44 @@ def test_分位点は線形補間():
 # --- 習慣 ---------------------------------------------------------------------
 
 def test_習慣は容量から引く():
-    settings = {"habits": [{"name": "ピアノ", "hours_per_day": 2.0}]}
-    assert kinds.available_hours(10.0, settings) == pytest.approx(8.0)
+    load = [{"name": "ピアノ", "hours_per_day": 2.0, "basis": "実測"}]
+    assert kinds.available_hours(10.0, load) == pytest.approx(8.0)
 
 
 def test_習慣が容量を超えても負にしない():
-    settings = {"habits": [{"name": "ピアノ", "hours_per_day": 12.0}]}
-    assert kinds.available_hours(10.0, settings) == 0.0
+    load = [{"name": "ピアノ", "hours_per_day": 12.0, "basis": "実測"}]
+    assert kinds.available_hours(10.0, load) == 0.0
 
 
-def test_時間の入っていない習慣は数えない():
-    settings = {"habits": [{"name": "ピアノ"}, {"hours_per_day": 1.0}]}
-    assert kinds.habit_hours_per_day(settings) == 0.0
+def test_実測が無ければ容量を削らない():
+    # 宣言だけで枠を取ると、やらなかった日まで容量を失う
+    settings = {"habits": [{"name": "ピアノ"}, {"name": "AtCoder"}]}
+    load = kinds.habit_load([], settings, since="2026-08-01", until="2026-08-14")
+    assert kinds.habit_hours_per_day(load) == 0.0
+    assert kinds.available_hours(10.0, load) == 10.0
+
+
+def test_習慣は実測の1日平均で引く():
+    settings = {"habits": [{"name": "ピアノ"}]}
+    rows = [{"subject": "ピアノ", "kind": "練習", "date": "2026-08-02", "net_hours": 3.0},
+            {"subject": "ピアノ", "kind": "練習", "date": "2026-08-05", "net_hours": 4.0}]
+    load = kinds.habit_load(rows, settings, since="2026-08-01", until="2026-08-14")
+    # 7h / 14日。やらなかった日も分母に入れる（1日あたりどれだけ持っていかれるか）
+    assert load[0]["hours_per_day"] == pytest.approx(0.5)
+    assert load[0]["basis"] == "実測" and load[0]["samples"] == 2
+
+
+def test_実測が貯まるまでは仮値と分かる形で引く():
+    settings = {"habits": [{"name": "ピアノ", "assumed_hours_per_day": 2.0}]}
+    load = kinds.habit_load([], settings, since="2026-08-01", until="2026-08-14")
+    assert load[0]["hours_per_day"] == 2.0 and load[0]["basis"] == "仮"
+
+
+def test_窓の外の実測は数えない():
+    settings = {"habits": [{"name": "ピアノ"}]}
+    rows = [{"subject": "ピアノ", "kind": "練習", "date": "2026-07-01", "net_hours": 10.0}]
+    load = kinds.habit_load(rows, settings, since="2026-08-01", until="2026-08-14")
+    assert load[0]["hours_per_day"] == 0.0
 
 
 # --- 曲線の汚染防止 -----------------------------------------------------------

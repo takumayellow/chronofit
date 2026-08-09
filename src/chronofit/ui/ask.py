@@ -91,7 +91,14 @@ def ask_blocks(blocks, categories, suggest, detail_for=None):
     answers = {}
 
     def record(block, category):
-        detail = detail_for(block) if category.get("study") and detail_for else None
+        if category.get("subject"):
+            # 中身が最初から決まっている選択肢（ピアノ等）は追加で聞かない。
+            # 1打で科目まで確定するので、習慣も実測が貯まる。
+            detail = {"subject": category["subject"],
+                      "kind": category.get("kind") or category["label"],
+                      "target": None, "units": None}
+        else:
+            detail = detail_for(block) if category.get("study") and detail_for else None
         answers[block["start"].isoformat(timespec="seconds")] = (category["label"], detail)
         suffix = f"  {detail['subject']}" if detail and detail.get("subject") else ""
         print(f"  -> {category['label']}{suffix}")

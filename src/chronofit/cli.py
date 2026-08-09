@@ -18,12 +18,12 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config, paths
 from .collect import daemon
-from .estimate import attribute, curve, kinds, offpc, slack
+from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import fit
 from .estimate import db as estimate_db
 from .model import context as context_model
@@ -245,21 +245,47 @@ def cmd_coverage(args):
     return 0
 
 
-def cmd_capacity(args):
-    """習慣を引いた、実際にタスクへ割り当てられる時間。
+def _habit_load(settings, days=14, today=None):
+    """習慣が1日あたり実際に持っていっている時間。実測が無ければ引かない。
 
-    毎日決まって取るもの（ピアノなど）をタスクとして積むと需要が膨らんで見えるが、
-    実際に起きているのは1日の使える時間が減ることだけなので、ここで先に引く。
+    枠を宣言して引くのはやめる。宣言した枠は、やらなかった日も容量を食い、
+    やり過ぎた日は食わない。どちらも実際とずれるので、直近の窓の実測から出す。
+
+    実測は所要時間DBではなくラベルと生スパンから直に取る。習慣には「終わった」が
+    無いので `done` が一度も走らず、DBには一生1行も入らないためである。
+    """
+    end = today or datetime.now().date()
+    start = end - timedelta(days=days - 1)
+    rows = measured.habit_rows(kinds.habits(settings), paths.label_dir(),
+                               paths.raw_dir(), start.isoformat(), end.isoformat())
+    return kinds.habit_load(rows, settings,
+                            since=start.isoformat(), until=end.isoformat())
+
+
+def cmd_capacity(args):
+    """習慣ぶんを引いた、実際にタスクへ割り当てられる時間。
+
+    毎日やるもの（ピアノ・精進）をタスクとして積むと需要が膨らんで見えるが、
+    実際に起きているのは1日の使える時間が減ることだけなので、ここで引く。
+    引く量は**直近の実測から出した1日平均**で、実測が無ければ引かない。
     """
     settings = config.load()
-    entries = kinds.habits(settings)
-    if not entries:
+    load = _habit_load(settings, args.window)
+    if not load:
         print("習慣が設定されていない（config の habits が空）。")
-    for habit in entries:
-        print(f"  -{habit['hours_per_day']:.1f}h/日  {habit['name']}")
+    for entry in load:
+        basis = entry["basis"] or "実測なし"
+        if entry["samples"]:
+            detail = f"{entry['samples']}件 / 直近{entry['days']}日"
+        elif entry["hours_per_day"]:
+            detail = "実測がまだ無いので仮値で引いている"
+        else:
+            detail = "実測も仮値も無いので引かない"
+        print(f"  -{entry['hours_per_day']:.1f}h/日  {entry['name']}"
+              f"（{basis}・{detail}）")
 
-    available = kinds.available_hours(args.hours, settings)
-    print(f"暦 {args.hours:.1f}h/日 - 習慣 {kinds.habit_hours_per_day(settings):.1f}h "
+    available = kinds.available_hours(args.hours, load)
+    print(f"暦 {args.hours:.1f}h/日 - 習慣 {kinds.habit_hours_per_day(load):.1f}h "
           f"= 割り当て可能 {available:.1f}h/日")
 
     bucket = _slack_buckets(settings).get(args.day_type)
@@ -298,10 +324,19 @@ def cmd_plan(args):
     hours_by_type.setdefault("出社", args.workday_hours)
 
     day_types = settings.get("day_types", {})
+    load = _habit_load(settings, args.window)
     result = fit.make(tasks, _instances(), hours_by_type, until, settings,
                       _slack_buckets(settings),
                       weekend_days=tuple(day_types.get("weekend", (5, 6))),
-                      workdays=tuple(day_types.get("workdays", ())))
+                      workdays=tuple(day_types.get("workdays", ())),
+                      habit_load=load)
+
+    for entry in load:
+        if entry["hours_per_day"]:
+            print(f"習慣 -{entry['hours_per_day']:.1f}h/日  {entry['name']}"
+                  f"（{entry['basis']}）")
+        else:
+            print(f"習慣 {entry['name']} は実測がまだ無いので容量から引いていない")
 
     print(f"需要 {result['demand']:.0f}h(net) / 供給 {result['supply']:.0f}h(net)"
           f"  〜{args.until}")
@@ -501,11 +536,13 @@ def build_parser():
     slack_cmd = sub.add_parser("slack", help="日タイプごとの slack 率")
     slack_cmd.set_defaults(func=cmd_slack)
 
-    capacity = sub.add_parser("capacity", help="習慣を引いた割り当て可能時間")
+    capacity = sub.add_parser("capacity", help="習慣の実測ぶんを引いた割り当て可能時間")
     capacity.add_argument("--hours", type=float, default=16.0,
                           help="1日の暦時間（睡眠を除いた素の持ち時間）")
     capacity.add_argument("--days", type=int, help="この日数ぶんの合計も出す")
     capacity.add_argument("--day-type", default="平日", help="slack 率を引く日タイプ")
+    capacity.add_argument("--window", type=int, default=14,
+                          help="習慣の1日平均を出す窓の日数（既定 14）")
     capacity.set_defaults(func=cmd_capacity)
 
     plan_cmd = sub.add_parser("plan", help="タスク一覧を週の容量へ割り付ける")
@@ -515,6 +552,8 @@ def build_parser():
                           help="平日・休日の1日の持ち時間（暦）")
     plan_cmd.add_argument("--workday-hours", type=float, default=3.0,
                           help="出社日の1日の持ち時間（暦）")
+    plan_cmd.add_argument("--window", type=int, default=14,
+                          help="習慣の1日平均を出す窓の日数（既定 14）")
     plan_cmd.set_defaults(func=cmd_plan)
 
     coverage = sub.add_parser("coverage", help="所要時間DBの中身")

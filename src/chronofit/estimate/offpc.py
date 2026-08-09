@@ -36,15 +36,18 @@ def _entries(label_root, since=None, until=None):
                 yield date, start, entry
 
 
-def collect(label_root, subject, kind, target=None, since=None, until=None):
+def collect(label_root, subject, kind=None, target=None, since=None, until=None):
     """条件に一致するオフPCブロックを日ごとに合計する。
 
     `target` を省くとその (科目, 種別) の全ブロックを拾う。章や年度をまたいで
     合算してしまわないよう、所要時間DBへ入れるときは target を指定する。
+    `kind` も省ける。習慣のように種別を分ける意味が無いものは科目だけで拾う。
     """
     days = {}
     for date, start, entry in _entries(label_root, since, until):
-        if entry.get("subject") != subject or entry.get("kind") != kind:
+        if entry.get("subject") != subject:
+            continue
+        if kind is not None and entry.get("kind") != kind:
             continue
         if target is not None and entry.get("target") != target:
             continue

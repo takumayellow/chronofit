@@ -9,8 +9,11 @@ from chronofit.plan import fit
 
 SETTINGS = {
     "kind_modes": {"過去問": "series", "レポート": "oneoff", "ピアノ": "habit"},
-    "habits": [{"name": "ピアノ", "hours_per_day": 1.0}],
+    "habits": [{"name": "ピアノ"}],
 }
+
+# 実測から出した1日あたりの目減り（kinds.habit_load の出力の形）
+HABIT_LOAD = [{"name": "ピアノ", "hours_per_day": 1.0, "basis": "実測", "samples": 7}]
 
 RATIOS = {"平日": {"ratio": 0.5, "days": 10}, "休日": {"ratio": 0.5, "days": 5}}
 
@@ -40,17 +43,24 @@ def test_後の本ほど軽く見積もられる():
     assert items[0]["hours"] > items[-1]["hours"]
 
 
-def test_容量から習慣を引く():
+def test_容量から習慣の実測ぶんを引く():
     days = [date(2026, 8, 10)]
-    entry = fit.capacity(days, {"平日": 8.0}, SETTINGS, RATIOS)[0]
-    assert entry["calendar"] == 7.0          # 8h - ピアノ1h
+    entry = fit.capacity(days, {"平日": 8.0}, HABIT_LOAD, RATIOS)[0]
+    assert entry["calendar"] == 7.0          # 8h - 実測 1h/日
     assert entry["net"] == 3.5               # slack 率 0.5 で net へ
+
+
+def test_実測の無い習慣では容量を削らない():
+    # 「毎日2時間ピアノ」と宣言しただけで容量を削ると、弾かなかった日の時間が消える
+    days = [date(2026, 8, 10)]
+    entry = fit.capacity(days, {"平日": 8.0}, None, RATIOS)[0]
+    assert entry["calendar"] == 8.0
 
 
 def test_slack率の無い日は供給に数えない():
     # 数えてしまうと、実際には無い時間を当てにした計画になる
     days = [date(2026, 8, 11)]               # 出社日
-    entry = fit.capacity(days, {"平日": 8.0, "出社": 3.0}, SETTINGS, RATIOS,
+    entry = fit.capacity(days, {"平日": 8.0, "出社": 3.0}, HABIT_LOAD, RATIOS,
                          workdays=("2026-08-11",))[0]
     assert entry["day_type"] == "出社"
     assert entry["net"] is None

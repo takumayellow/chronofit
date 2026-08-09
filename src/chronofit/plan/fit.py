@@ -5,8 +5,10 @@
 - **同じ単位で比べる。** 見積もりは「入力のあった時間（net）」で出る。カレンダーの空きは
   暦時間なので、そのままでは比べられない。容量側に slack 率を掛けて net へ落としてから
   引き算する。率が無い日タイプは**換算せず、換算できないと報告する**。
-- **習慣は容量から引く。** 毎日やるものを需要側に積むと「毎日2時間×33日＝66時間のタスク」
-  という無意味な数字になる。引き算は `kinds.available_hours` が持つ。
+- **習慣は容量から引く。ただし実測ぶんだけ。** 毎日やるものを需要側に積むと
+  「毎日2時間×33日＝66時間のタスク」という無意味な数字になる。かといって宣言した枠を
+  引くと、やらなかった日まで容量を失う。引くのは直近の実測から出した1日平均
+  （`kinds.habit_load`）で、実測が無ければ引かない。
 - **割り付けは週単位。** 実測で「カレンダー通りには全く動けない」ことが分かっている以上、
   時刻まで割り付けた計画は作った瞬間に嘘になる。守れる粒度は週のゴールまで。
 
@@ -31,14 +33,18 @@ def week_key(day):
     return monday.isoformat()
 
 
-def capacity(days, hours_by_type, settings=None, ratios=None,
+def capacity(days, hours_by_type, habit_load=None, ratios=None,
              weekend_days=(5, 6), workdays=()):
-    """日ごとの容量を net 時間で。率が無ければ `net` は None にして暦のまま残す。"""
+    """日ごとの容量を net 時間で。率が無ければ `net` は None にして暦のまま残す。
+
+    `habit_load` は `kinds.habit_load` が実測から出した1日あたりの目減り。
+    渡さなければ何も引かない（宣言だけで容量を削らない）。
+    """
     result = []
     for day in days:
         kind = slack.day_type(day, weekend_days, workdays)
         calendar = hours_by_type.get(kind, hours_by_type.get("平日", 0.0))
-        available = kinds.available_hours(calendar, settings)
+        available = kinds.available_hours(calendar, habit_load)
         ratio = (ratios or {}).get(kind, {}).get("ratio")
         result.append({"date": day, "day_type": kind, "calendar": available,
                        "net": available * ratio if ratio else None,
@@ -122,16 +128,17 @@ def allocate(items, weeks):
 
 
 def make(tasks, instances, hours_by_type, until, settings=None, ratios=None,
-         today=None, weekend_days=(5, 6), workdays=()):
+         today=None, weekend_days=(5, 6), workdays=(), habit_load=None):
     """需要と容量を突き合わせて計画にする。"""
     start = today or date.today()
     days = days_between(start, until)
-    day_capacity = capacity(days, hours_by_type, settings, ratios,
+    day_capacity = capacity(days, hours_by_type, habit_load, ratios,
                             weekend_days, workdays)
     weeks = weekly_capacity(day_capacity)
     items = expand(tasks, instances, settings)
     placed, overflow = allocate(items, weeks)
     return {"weeks": weeks, "placed": placed, "overflow": overflow,
+            "habit_load": habit_load or [],
             "demand": sum(item["hours"] or 0.0 for item in items),
             "supply": sum(week["net"] for week in weeks),
             "unknown_days": sum(week["unknown_days"] for week in weeks)}
