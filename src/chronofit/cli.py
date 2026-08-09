@@ -2,6 +2,7 @@
 
     python -m chronofit collect              端末イベントの収集（常駐）
     python -m chronofit snapshot             ブラウザ履歴を退避（刈られる前に）
+    python -m chronofit history              退避した履歴を日ごと・分類ごとに見る
     python -m chronofit status               収集状況の確認
     python -m chronofit rollup               1日分を畳んで net/wall/離席に分ける
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
@@ -26,7 +27,7 @@ from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
 from .model import rollup
-from .sources import browser, clockify
+from .sources import browser, clockify, history
 from .ui import ask
 
 
@@ -56,6 +57,46 @@ def cmd_snapshot(args):
         span = (f"{visits[0][0]:%Y-%m-%d} - {visits[-1][0]:%Y-%m-%d}" if visits else "空")
         print(f"  {name}/{profile:10} {len(visits):6} visits  {span}")
     print(f"-> {destination_root}")
+    return 0
+
+
+def cmd_history(args):
+    """溜まっているブラウザ履歴を、日ごと・分類ごとの時間として見る。
+
+    L0 が動き出す前の期間について残っている唯一の痕跡なので、ここを読めるように
+    しておかないと、過去は分類できないまま蒸発する。
+    """
+    settings = config.load()
+    rules = (settings.get("url_rules") or []) + (settings.get("title_rules") or [])
+    since = history.parse_since(args.since)
+
+    sources = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        sources.extend(browser.find_histories(local_app_data))
+    sources.extend(history.snapshots(paths.snapshot_dir()))
+
+    visits = history.collect(sources, since)
+    if not visits:
+        print("履歴が読めない（スナップショットも実ファイルも空）。")
+        return 1
+
+    days = history.daily(visits, rules)
+    print(f"{len(visits)}訪問  {days[0]['date']} - {days[-1]['date']}  "
+          f"（{len(sources)}本の History から）")
+    if not rules:
+        print("  分類規則が空（config の url_rules / title_rules）。下の重い順を規則へ写す。")
+
+    for day in days[-args.days:]:
+        known = sum(day["by_label"].values())
+        top = sorted(day["by_label"].items(), key=lambda item: -item[1])[:3]
+        detail = "  ".join(f"{label} {seconds / 3600:.1f}h" for label, seconds in top)
+        print(f"  {day['date']}  接触 {day['sec'] / 3600:5.1f}h  "
+              f"分類済 {known / 3600:4.1f}h  {detail}")
+
+    print("未分類のドメイン（重い順）:")
+    for host, seconds in history.unclassified(days):
+        print(f"  {seconds / 3600:5.1f}h  {host}")
     return 0
 
 
@@ -358,6 +399,11 @@ def build_parser():
 
     snapshot = sub.add_parser("snapshot", help="ブラウザ履歴を退避")
     snapshot.set_defaults(func=cmd_snapshot)
+
+    hist = sub.add_parser("history", help="ブラウザ履歴を日ごと・分類ごとに見る")
+    hist.add_argument("--days", type=int, default=14, help="直近何日を表示するか")
+    hist.add_argument("--since", help="この日以降だけ読む YYYY-MM-DD")
+    hist.set_defaults(func=cmd_history)
 
     status = sub.add_parser("status", help="収集状況の確認")
     status.add_argument("--days", type=int, default=7, help="直近何日を表示するか")
