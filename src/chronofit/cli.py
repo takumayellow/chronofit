@@ -5,6 +5,9 @@
     python -m chronofit status               収集状況の確認
     python -m chronofit rollup               1日分を畳んで net/wall/離席に分ける
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
+    python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
+    python -m chronofit slack                日タイプごとの slack 率
+    python -m chronofit coverage             所要時間DBに何が溜まっているか
     python -m chronofit backfill-clockify F  過去の Clockify CSV を取り込む
 """
 import argparse
@@ -16,6 +19,8 @@ from pathlib import Path
 
 from . import config, paths
 from .collect import daemon
+from .estimate import curve, slack
+from .estimate import db as estimate_db
 from .model import labels as labels_model
 from .model import rollup
 from .sources import browser, clockify
@@ -158,6 +163,58 @@ def cmd_label(args):
     return 0
 
 
+def _instances():
+    return estimate_db.load(estimate_db.default_path(paths.data_root()))
+
+
+def _slack_buckets(settings):
+    weekend = tuple(settings.get("day_types", {}).get("weekend", (5, 6)))
+    workdays = tuple(settings.get("day_types", {}).get("workdays", ()))
+    return slack.ratios(slack.load_rollups(paths.rollup_dir()), weekend, workdays)
+
+
+def cmd_slack(args):
+    """日タイプごとの slack 率。見積もりを暦時間へ直すときの分母になる。"""
+    print(slack.format_ratios(_slack_buckets(config.load())))
+    return 0
+
+
+def cmd_coverage(args):
+    """所要時間DBに何が溜まっているか。見積もりの信頼度そのもの。"""
+    rows = estimate_db.coverage(_instances())
+    if not rows:
+        print("所要時間DBが空。まだ1件も確定していない。")
+        return 1
+    print("科目            種別      件数  最大本数  net合計")
+    for row in rows:
+        print(f"{row['subject']:14.14} {row['kind']:8.8} {row['count']:5}  "
+              f"{row['max_index']:6}  {row['net_hours']:6.1f}h")
+    return 0
+
+
+def cmd_estimate(args):
+    """1インスタンスの見積もり。根拠を必ず一緒に出す。"""
+    instances = _instances()
+    index = args.index or curve.next_index(instances, args.subject, args.kind)
+    result = curve.estimate(instances, args.subject, args.kind, index, args.assumed)
+
+    print(f"{args.subject} {args.kind} {index}本目")
+    if result["hours"] is None:
+        print(f"  見積もれない: {result['note']}")
+        return 1
+    print(f"  net {result['hours']:.1f}h  [{result['basis']}] {result['note']}")
+
+    buckets = _slack_buckets(config.load())
+    bucket = buckets.get(args.day_type)
+    if bucket and bucket["ratio"]:
+        hours = slack.calendar_hours(result["hours"], bucket["ratio"])
+        print(f"  暦時間 {hours:.1f}h  ({args.day_type} の slack率 {bucket['ratio']:.0%}, "
+              f"{bucket['days']}日分の実測)")
+    else:
+        print(f"  暦時間は出せない: {args.day_type} の slack 率がまだ無い")
+    return 0
+
+
 def cmd_backfill_clockify(args):
     entries = clockify.read_normalized(args.csv)
     report = clockify.summarize(entries)
@@ -201,6 +258,20 @@ def build_parser():
     label = sub.add_parser("label", help="離席ブロックにラベルを付ける")
     label.add_argument("--date", help="YYYY-MM-DD（既定は今日）")
     label.set_defaults(func=cmd_label)
+
+    est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
+    est.add_argument("subject", help="科目")
+    est.add_argument("kind", help="種別（過去問 / 参考書 / レポート ...）")
+    est.add_argument("--index", type=int, help="何本目か（既定は実績の次）")
+    est.add_argument("--assumed", type=float, help="実績も流用元も無い場合に置く仮値 時間")
+    est.add_argument("--day-type", default="平日", help="暦時間へ直すときの日タイプ")
+    est.set_defaults(func=cmd_estimate)
+
+    slack_cmd = sub.add_parser("slack", help="日タイプごとの slack 率")
+    slack_cmd.set_defaults(func=cmd_slack)
+
+    coverage = sub.add_parser("coverage", help="所要時間DBの中身")
+    coverage.set_defaults(func=cmd_coverage)
 
     backfill = sub.add_parser("backfill-clockify", help="Clockify CSV を取り込む")
     backfill.add_argument("csv", type=Path, help="task_entries_normalized.csv")
