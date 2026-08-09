@@ -12,8 +12,9 @@
                         使い切ったあとでも次の機会に自力で戻れるようにする
     chronofit-snapshot  ブラウザ履歴の日次退避。Chromium は履歴を勝手に刈るので、
                         撮り逃すと過去分は復旧できない
-    chronofit-rollup    前日ぶんの畳み込み。毎晩自動で回して、日次の集計が
-                        「思い出したときに手で打つ」ものにならないようにする
+    chronofit-daily     前日ぶんの畳み込み + その日の進捗の記録。毎晩自動で回して、
+                        日次の集計と現在地が「思い出したときに手で打つ」ものに
+                        ならないようにする
 
 .PARAMETER SnapshotTime
   スナップショットを走らせる時刻 (HH:mm)。既定 13:00。
@@ -95,16 +96,20 @@ Register-ScheduledTask -TaskName "$Prefix-snapshot" -Force `
     -Trigger (New-ScheduledTaskTrigger -Daily -At $SnapshotTime) `
     -Settings $snapshotSettings | Out-Null
 
-# --- 前日ぶんの畳み込み -----------------------------------------------------
+# --- 前日ぶんの畳み込み + 進捗の記録 ----------------------------------------
 # 収集しただけでは日次の姿が見えない。畳むのを人手に残すと、忙しい日ほど飛ぶ。
-$rollupSettings = New-ScheduledTaskSettingsSet @common -MultipleInstances IgnoreNew
-$rollupSettings.ExecutionTimeLimit = 'PT10M'
+# 進捗も同じタスクで残す。現在地は毎回計算できるが、「あの日どれだけ残っていると
+# 思っていたか」は後から計算できないので、その日のうちに写しておく必要がある。
+$dailySettings = New-ScheduledTaskSettingsSet @common -MultipleInstances IgnoreNew
+$dailySettings.ExecutionTimeLimit = 'PT10M'
 
-Register-ScheduledTask -TaskName "$Prefix-rollup" -Force `
-    -Description 'chronofit: 前日ぶんを畳んで net/wall/離席に分ける（日次）' `
-    -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit rollup --date yesterday') `
+Unregister-ScheduledTask -TaskName "$Prefix-rollup" -Confirm:$false -ErrorAction SilentlyContinue
+
+Register-ScheduledTask -TaskName "$Prefix-daily" -Force `
+    -Description 'chronofit: 前日ぶんを畳んで、その日の進捗を残す（日次）' `
+    -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit daily') `
     -Trigger (New-ScheduledTaskTrigger -Daily -At $RollupTime) `
-    -Settings $rollupSettings | Out-Null
+    -Settings $dailySettings | Out-Null
 
 Get-ScheduledTask -TaskName "$Prefix-*" |
     Select-Object TaskName, State, @{n='Next';e={ ($_ | Get-ScheduledTaskInfo).NextRunTime }} |

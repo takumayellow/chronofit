@@ -104,6 +104,7 @@ python -m chronofit status      # 収集できているかの確認
 # 1日1回（人が触る唯一の場所。数十秒）
 python -m chronofit rollup      # 1日分を畳んで net / wall / 離席に分ける
 python -m chronofit label       # 15分以上の離席ブロックにラベルを付ける
+python -m chronofit daily       # 前日を畳んで進捗を残す（毎晩自動で走る。手では要らない）
 
 # 終わったら所要時間DBへ入れる
 python -m chronofit done 応用数学B 過去問 --match 2024   # PC作業ぶんを実測から
@@ -113,7 +114,9 @@ python -m chronofit done 応用数学B 過去問 --offpc        # 紙でやっ�
 python -m chronofit estimate 応用数学B 過去問   # (科目, 種別, 何本目) の見積もり
 python -m chronofit slack                       # 日タイプごとの slack 率
 python -m chronofit capacity --days 30          # 暦 - 習慣の実測 = 割り当て可能な時間
-python -m chronofit plan tasks.json --until 2026-09-14   # 週の容量へ割り付ける
+python -m chronofit task add 応用数学B 過去問 --count 5 --due 2026-09-14  # やることを一覧へ
+python -m chronofit board                       # いまどこまで来ているか
+python -m chronofit plan --until 2026-09-14     # 残りを週の容量へ割り付ける
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
 python -m chronofit history --days 14           # ブラウザ履歴を分類して過去を埋める
 
@@ -129,6 +132,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 
 `snapshot` は日次で回すこと。実測で Vivaldi の履歴は **16日分しか残っていなかった**。
 写しておかないと過去の接点ログは取り返しがつかない形で消える。
+
+## 進捗の数え方
+
+`board` は「何本のうち何本が終わって、残りに何時間要るか」を出す。**終わったかどうかは
+所要時間DB（`done` が書く）から数える**。チェック欄を別に持たせない。付け忘れた瞬間に
+嘘の進捗になるからで、記録を二重に付けさせないのはこの計測系全体の方針でもある。
+
+一覧は `%LOCALAPPDATA%\chronofit	asks.json` に1つだけ置く（`task add` / `task rm`）。
+`plan` は一覧から**終わったぶんを落として**割り付ける。目標本数をそのまま渡すと、2本
+終わった時点で「残り3本」ではなく「これから5本」の計画が出てしまう。
+
+残り時間は1本ずつ見積もって足す。学習曲線があるので「1本の見積もり × 残り本数」には
+ならない。見積もれない本が混ざったら**合計を出さず、件数として別に出す**。足せるものだけ
+足すと、根拠の無い本を 0 時間として計画に混ぜることになる。
 
 ## 見積もりの出し方
 

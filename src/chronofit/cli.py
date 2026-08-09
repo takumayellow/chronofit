@@ -24,7 +24,8 @@ from pathlib import Path
 from . import config, paths
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
-from .plan import fit
+from .plan import board, fit
+from .plan import tasks as tasks_store
 from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
@@ -307,6 +308,15 @@ def cmd_capacity(args):
     return 0
 
 
+def _capacity_hours(settings, args):
+    """日タイプごとの1日の持ち時間。設定が持っていればそちらが勝つ。"""
+    hours_by_type = dict(settings.get("capacity_hours") or {})
+    hours_by_type.setdefault("平日", getattr(args, "hours", None) or 8.0)
+    hours_by_type.setdefault("休日", getattr(args, "hours", None) or 8.0)
+    hours_by_type.setdefault("出社", getattr(args, "workday_hours", None) or 3.0)
+    return hours_by_type
+
+
 def cmd_plan(args):
     """タスク一覧を、使える容量へ週単位で割り付ける。
 
@@ -315,24 +325,28 @@ def cmd_plan(args):
     """
     settings = config.load()
     try:
-        spec = json.loads(args.tasks.read_text(encoding="utf-8"))
+        stored = _tasks(args.tasks)
     except (OSError, json.JSONDecodeError) as error:
         print(f"タスク定義を読めない: {error}")
         return 1
-    tasks = spec.get("tasks") if isinstance(spec, dict) else spec
-    if not tasks:
-        print("タスクが空。{\"tasks\": [{\"subject\": ..., \"kind\": ...}]} の形で渡す。")
+    if not stored:
+        print("タスクが空。chronofit task add <科目> <種別> --count N で足す。")
         return 1
 
+    # 終わったぶんを落としてから割り付ける。一覧をそのまま渡すと、2本終わった
+    # 時点で「残り3本」ではなく「これから5本」の計画になる。
+    instances = _instances()
+    tasks = board.remaining_tasks(stored, instances, settings)
+    if not tasks:
+        print("残っているものが無い。全部終わっている。")
+        return 0
+
     until = datetime.strptime(args.until, "%Y-%m-%d").date()
-    hours_by_type = dict(settings.get("capacity_hours") or {})
-    hours_by_type.setdefault("平日", args.hours)
-    hours_by_type.setdefault("休日", args.hours)
-    hours_by_type.setdefault("出社", args.workday_hours)
+    hours_by_type = _capacity_hours(settings, args)
 
     day_types = settings.get("day_types", {})
     load = _habit_load(settings, args.window)
-    result = fit.make(tasks, _instances(), hours_by_type, until, settings,
+    result = fit.make(tasks, instances, hours_by_type, until, settings,
                       _slack_buckets(settings),
                       weekend_days=tuple(day_types.get("weekend", (5, 6))),
                       workdays=tuple(day_types.get("workdays", ())),
@@ -466,6 +480,126 @@ def cmd_done(args):
     return 0
 
 
+def _tasks(path=None):
+    return tasks_store.load(path or paths.tasks_path())
+
+
+def cmd_task(args):
+    """やることの一覧を足す / 消す / 見る。進捗は持たせない（DBから数える）。"""
+    path = paths.tasks_path()
+    current = _tasks(path)
+
+    if args.action in ("add", "rm") and not args.subject:
+        print(f"科目が要る: chronofit task {args.action} <科目> <種別>", file=sys.stderr)
+        return 1
+    if args.action == "add" and not args.kind:
+        print("種別が要る: chronofit task add <科目> <種別>", file=sys.stderr)
+        return 1
+
+    if args.action == "add":
+        # 締切はここで弾く。読む側（board / daily）で落とすと、書き間違えた1行のせいで
+        # 毎晩の自動実行が止まり、そのぶんの進捗が永久に残らなくなる。
+        if args.due:
+            try:
+                datetime.strptime(args.due, "%Y-%m-%d")
+            except ValueError:
+                print(f"締切は YYYY-MM-DD で書く: --due {args.due}", file=sys.stderr)
+                return 1
+        if args.count < 1:
+            print("--count は1以上。やらないなら task rm で消す。", file=sys.stderr)
+            return 1
+        entry = {"subject": args.subject, "kind": args.kind,
+                 "count": args.count, "priority": args.priority}
+        for name in ("target", "due", "assumed_hours"):
+            if getattr(args, name, None) is not None:
+                entry[name] = getattr(args, name)
+        tasks_store.save(path, tasks_store.upsert(current, entry))
+        print(f"{args.subject} {args.kind} {args.count}本 -> {path}")
+        return 0
+
+    if args.action == "rm":
+        removed, kept = tasks_store.remove(current, args.subject, args.kind, args.target)
+        if not removed:
+            print(f"{args.subject} {args.kind or ''} は一覧に無い。")
+            return 1
+        tasks_store.save(path, kept)
+        print(f"{removed}件 消した。残り {len(kept)}件")
+        return 0
+
+    if not current:
+        print(f"一覧が空。chronofit task add <科目> <種別> --count N で足す。\n  {path}")
+        return 0
+    for entry in current:
+        target = f" {entry['target']}" if entry.get("target") else ""
+        due = f"  〜{entry['due']}" if entry.get("due") else ""
+        print(f"  [{entry.get('priority') or '-'}] {entry['subject']} "
+              f"{entry['kind']}{target}  {entry.get('count', 1)}本{due}")
+    return 0
+
+
+def cmd_board(args):
+    """いまどこまで来ているか。予定を立て直す前に必ず見る面。
+
+    残量は宣言ではなく所要時間DBから数える。数えられないもの（実測が無くて
+    見積もれない本）は 0 として合計に混ぜず、件数として別に出す。
+    """
+    settings = config.load()
+    task_list = _tasks(args.tasks)
+    if not task_list:
+        print("一覧が空。chronofit task add <科目> <種別> --count N で足す。")
+        # 一覧がまだ無いのは異常ではない。毎晩の自動実行から呼ばれるので、ここで
+        # 失敗を返すとスケジューラが毎日「失敗」を記録し、本物の故障が埋もれる。
+        return 0 if getattr(args, "quiet_when_empty", False) else 1
+
+    instances = _instances()
+    rows = board.rows(task_list, instances, settings)
+    print(board.format_rows(rows))
+    summary = board.summarize(rows)
+    print("\n" + board.format_summary(summary))
+
+    if args.until:
+        remaining = board.remaining_tasks(task_list, instances, settings)
+        load = _habit_load(settings, args.window)
+        result = fit.make(remaining, instances, _capacity_hours(settings, args),
+                          datetime.strptime(args.until, "%Y-%m-%d").date(), settings,
+                          _slack_buckets(settings),
+                          weekend_days=tuple(settings.get("day_types", {})
+                                             .get("weekend", (5, 6))),
+                          workdays=tuple(settings.get("day_types", {})
+                                         .get("workdays", ())),
+                          habit_load=load)
+        print(f"\n残りの需要 {result['demand']:.0f}h(net) / "
+              f"供給 {result['supply']:.0f}h(net)  〜{args.until}")
+        if result["overflow"]:
+            print(f"  入りきらない {len(result['overflow'])}本 — "
+                  f"詳しくは chronofit plan --until {args.until}")
+
+    if args.save:
+        date = _resolve_date(args.date)
+        destination = paths.ensure(paths.board_dir()) / f"{date}.json"
+        destination.write_text(json.dumps(
+            {"date": date, "summary": summary, "rows": rows},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"-> {destination}")
+    return 0
+
+
+def cmd_daily(args):
+    """人手ゼロで回す1日の締め。前日を畳んで、進捗を写して残す。
+
+    畳むのと進捗を見るのを別コマンドのままにすると、**忙しい日ほど飛ぶ**。
+    忙しい日こそ予定が崩れているので、そこが欠けると記録として使えない。
+    """
+    date = _resolve_date(args.date or "yesterday")
+    failed = cmd_rollup(argparse.Namespace(date=date))
+    print()
+    board_args = argparse.Namespace(tasks=None, save=True, date=date,
+                                    until=None, window=14,
+                                    hours=8.0, workday_hours=3.0,
+                                    quiet_when_empty=True)
+    return cmd_board(board_args) or failed
+
+
 def cmd_backfill_clockify(args):
     entries = clockify.read_normalized(args.csv)
     report = clockify.summarize(entries)
@@ -552,8 +686,35 @@ def build_parser():
                           help="習慣の1日平均を出す窓の日数（既定 14）")
     capacity.set_defaults(func=cmd_capacity)
 
+    task_cmd = sub.add_parser("task", help="やることの一覧を足す / 消す / 見る")
+    task_cmd.add_argument("action", nargs="?", default="list",
+                          choices=("list", "add", "rm"))
+    task_cmd.add_argument("subject", nargs="?", help="科目")
+    task_cmd.add_argument("kind", nargs="?", help="種別（過去問 / 参考書 ...）")
+    task_cmd.add_argument("--count", type=int, default=1, help="全部で何本やるか")
+    task_cmd.add_argument("--due", help="締切 YYYY-MM-DD")
+    task_cmd.add_argument("--priority", default="B", help="S / A / B / C")
+    task_cmd.add_argument("--target", help="対象（2024年度期末 など）")
+    task_cmd.add_argument("--assumed-hours", type=float,
+                          help="実測も流用元も無い場合に置く仮値 時間")
+    task_cmd.set_defaults(func=cmd_task)
+
+    board_cmd = sub.add_parser("board", help="いまどこまで来ているか（進捗）")
+    board_cmd.add_argument("--tasks", type=Path, help="別のタスク定義を使う")
+    board_cmd.add_argument("--until", help="この日までの需要と供給も出す YYYY-MM-DD")
+    board_cmd.add_argument("--save", action="store_true", help="その日の残量を残す")
+    board_cmd.add_argument("--date", help="保存する日付 YYYY-MM-DD / today / yesterday")
+    board_cmd.add_argument("--hours", type=float, default=8.0)
+    board_cmd.add_argument("--workday-hours", type=float, default=3.0)
+    board_cmd.add_argument("--window", type=int, default=14)
+    board_cmd.set_defaults(func=cmd_board)
+
+    daily = sub.add_parser("daily", help="前日を畳んで進捗を残す（毎晩の自動実行用）")
+    daily.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は前日）")
+    daily.set_defaults(func=cmd_daily)
+
     plan_cmd = sub.add_parser("plan", help="タスク一覧を週の容量へ割り付ける")
-    plan_cmd.add_argument("tasks", type=Path, help="タスク定義の JSON")
+    plan_cmd.add_argument("--tasks", type=Path, help="別のタスク定義を使う")
     plan_cmd.add_argument("--until", required=True, help="いつまでに YYYY-MM-DD")
     plan_cmd.add_argument("--hours", type=float, default=8.0,
                           help="平日・休日の1日の持ち時間（暦）")
