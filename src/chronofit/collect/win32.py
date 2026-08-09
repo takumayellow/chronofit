@@ -46,13 +46,15 @@ def idle_seconds():
     return (elapsed & 0xFFFFFFFF) / 1000.0
 
 
-def _process_name(hwnd):
-    """ウィンドウを所有するプロセスの実行ファイル名。取れなければ None。"""
-    pid = wt.DWORD()
-    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    if not pid.value:
+def process_name(pid):
+    """PID から実行ファイル名。取れなければ None。
+
+    音を出しているセッションの持ち主を名前で突き合わせるのに使う（ブラウザの音声は
+    ウィンドウを持つプロセスとは別の子プロセスから出るため、PID では一致しない）。
+    """
+    if not pid:
         return None
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         return None
     try:
@@ -63,6 +65,12 @@ def _process_name(hwnd):
         return path.value.rsplit("\\", 1)[-1]
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _pid_of_window(hwnd):
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value or None
 
 
 def foreground():
@@ -77,7 +85,7 @@ def foreground():
     length = user32.GetWindowTextLengthW(hwnd)
     buf = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, buf, length + 1)
-    return _process_name(hwnd), buf.value
+    return process_name(_pid_of_window(hwnd)), buf.value
 
 
 def is_locked(process_name):

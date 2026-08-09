@@ -25,9 +25,11 @@ def _dates(since, until):
 
 
 def collect(raw_dir, pattern, since, until=None):
-    """タイトルが pattern に一致したスパンの net / wall を日別に合算する。
+    """タイトルが pattern に一致したスパンの net / passive / wall を日別に合算する。
 
-    net は在席かつ入力ありの時間。作業時間としてDBに入れるのはこちら。
+    net は在席かつ入力ありの時間。passive は手が止まっていたが前景が再生していた時間で、
+    講義映像を観た時間はここに入る。**観ていた時間も作業時間**なので、DBへ入れる値は
+    net + passive にする。片方だけにすると、動画で学ぶ科目が実際より軽く見える。
     """
     regex = re.compile(pattern, re.IGNORECASE)
     days = []
@@ -36,16 +38,25 @@ def collect(raw_dir, pattern, since, until=None):
         if not path.is_file():
             continue
         segments = rollup.to_segments(rollup.read_day(path))
-        net = wall = 0.0
+        net = wall = passive = 0.0
         matched = set()
         for segment in segments:
-            if segment["kind"] != "present" or not regex.search(segment["title"]):
+            if not regex.search(segment["title"]):
                 continue
-            net += segment["active_sec"]
-            wall += segment["sec"]
+            if segment["kind"] == "present":
+                net += segment["active_sec"]
+                wall += segment["sec"]
+            elif segment["kind"] == "passive":
+                passive += segment["sec"]
+                wall += segment["sec"]
+            else:
+                continue
             matched.add(segment["title"])
-        if net > 0:
-            days.append({"date": day.isoformat(), "net_hours": net / 3600.0,
+        if net + passive > 0:
+            days.append({"date": day.isoformat(),
+                         "net_hours": (net + passive) / 3600.0,
+                         "input_hours": net / 3600.0,
+                         "passive_hours": passive / 3600.0,
                          "wall_hours": wall / 3600.0, "titles": sorted(matched)})
     return days
 
@@ -54,6 +65,8 @@ def totals(days):
     """日別を1インスタンス分へ畳む。sessions は「何日に分けたか」。"""
     return {
         "net_hours": sum(d["net_hours"] for d in days),
+        "input_hours": sum(d.get("input_hours", d["net_hours"]) for d in days),
+        "passive_hours": sum(d.get("passive_hours", 0.0) for d in days),
         "wall_hours": sum(d["wall_hours"] for d in days),
         "sessions": len(days),
         "first": days[0]["date"] if days else None,

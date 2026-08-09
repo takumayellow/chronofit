@@ -9,6 +9,9 @@
 - **在席は「前景が何か」ではなく「入力があったか」で数える。** active_sec は
   アイドルがしきい値未満だったサンプル数から出す。PDF を開いたまま離席した分は
   sec には乗るが active_sec には乗らない。
+- **ただし入力の無い在席が全部「離席」ではない。** 動画・講義映像を観ている間は手が
+  動かない。前景プロセスが実際に音を鳴らしていたサンプルを media_sec として別に数え、
+  「手は止まっているが観ていた時間」を離席から切り離す（判定は collect/audio.py）。
 - **時計の飛びをスリープとして検出する。** サンプル間隔が想定を大きく超えたら、
   その間はスリープ/シャットダウンなので span ではなく gap として記録する。
   これがオフPC時間の主要な入口になる。
@@ -23,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 from .. import paths
 from ..model.title import normalize
-from . import win32
+from . import audio, win32
 
 INTERVAL_SEC = 15.0        # サンプリング間隔
 ACTIVE_IDLE_SEC = 60.0     # これ未満のアイドルなら「入力していた」とみなす
@@ -58,16 +61,25 @@ def _append(record, moment):
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _media_playing(process):
+    """前景プロセスがいま音を鳴らしているか。判定できなければ False。
+
+    名前で突き合わせるのは、ブラウザの音声が別プロセスから出るため（audio.py）。
+    """
+    names = audio.playing(win32.process_name)
+    return bool(names) and process in names
+
+
 def _sample():
-    """現在の (キー, タイトル, アイドル秒)。キーはスパンの同一性判定に使う。"""
+    """現在の (キー, タイトル, アイドル秒, 再生中か)。キーはスパンの同一性判定に使う。"""
     process, title = win32.foreground()
     idle = win32.idle_seconds()
     if process is None:
-        return NO_WINDOW_KEY, "", idle
+        return NO_WINDOW_KEY, "", idle, False
     if win32.is_locked(process):
-        return LOCKED_KEY, "", idle
+        return LOCKED_KEY, "", idle, False
     title = "" if process in TITLE_DENYLIST else normalize(title)
-    return (process, title), title, idle
+    return (process, title), title, idle, _media_playing(process)
 
 
 class _Span:
@@ -81,14 +93,17 @@ class _Span:
         self.interval = interval
         self.samples = 0
         self.active_samples = 0
+        self.media_samples = 0
         self.last_idle = None
 
-    def add(self, idle, moment):
+    def add(self, idle, moment, media=False):
         self.ended = moment
         self.samples += 1
         self.last_idle = idle
         if idle is not None and idle < ACTIVE_IDLE_SEC:
             self.active_samples += 1
+        if media:
+            self.media_samples += 1
 
     def seconds(self):
         """1サンプル = interval 秒ぶんを代表させる。
@@ -106,6 +121,8 @@ class _Span:
             "sec": round(self.seconds(), 1),
             # active は「入力があったサンプル数 × 間隔」。前景時間との差が離席・放置。
             "active_sec": round(self.active_samples * self.interval, 1),
+            # 前景が音を鳴らしていた時間。入力が無くても観ていた時間の証拠になる。
+            "media_sec": round(self.media_samples * self.interval, 1),
             "proc": self.key[0],
             "title": self.title,
             "idle_end": None if self.last_idle is None else round(self.last_idle, 1),
@@ -162,6 +179,7 @@ def run(interval=INTERVAL_SEC, verbose=False, duration=None):
     """
     paths.ensure(paths.raw_dir())
     _install_signal_handlers()
+    audio.initialize()   # 音声セッションを読むための COM 初期化。失敗しても収集は続ける
     lock = _acquire_lock()
     if lock is None:
         print("collector は既に起動している。二重起動しない。", file=sys.stderr)
@@ -195,7 +213,7 @@ def run(interval=INTERVAL_SEC, verbose=False, duration=None):
                 continue
 
             try:
-                key, title, idle = _sample()
+                key, title, idle, media = _sample()
             except OSError as error:  # 一過性の API 失敗でループを死なせない
                 if verbose:
                     print(f"  sample 失敗（継続）: {error}")
@@ -209,10 +227,11 @@ def run(interval=INTERVAL_SEC, verbose=False, duration=None):
 
             if span is None:
                 span = _Span(key, title, moment, interval)
-            span.add(idle, moment)
+            span.add(idle, moment, media)
 
             if verbose:
-                mark = "*" if idle is not None and idle < ACTIVE_IDLE_SEC else " "
+                mark = "*" if idle is not None and idle < ACTIVE_IDLE_SEC else (
+                    "~" if media else " ")
                 print(f"  [{moment:%H:%M:%S}]{mark} {key[0]:24.24} {title[:56]}")
     except KeyboardInterrupt:
         pass

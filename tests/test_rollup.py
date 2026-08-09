@@ -17,9 +17,10 @@ def _at(hour, minute, second=0):
     return datetime(2026, 8, 9, hour, minute, second, tzinfo=JST).isoformat(timespec="seconds")
 
 
-def span(start, end, sec, active_sec, proc="Code.exe", title="main.py"):
+def span(start, end, sec, active_sec, proc="Code.exe", title="main.py", media_sec=0.0):
     return {"t": "span", "start": start, "end": end, "sec": sec,
-            "active_sec": active_sec, "proc": proc, "title": title}
+            "active_sec": active_sec, "media_sec": media_sec,
+            "proc": proc, "title": title}
 
 
 def gap(start, end, sec):
@@ -104,3 +105,48 @@ def test_ラベルの無いブロックはNoneのまま():
                span(_at(10, 0), _at(10, 30), 1800, 1800)]
     summary = rollup.merge_labels(rollup.summarize_day(records), {})
     assert summary["away_blocks"][0]["label"] is None
+
+
+# --- 受動（観ていた時間） -----------------------------------------------------
+
+def test_再生していた無入力は離席にしない():
+    # 動画を観ている間は手が動かない。離席に落とすと「観た時間」が消える
+    records = [span(_at(20, 0), _at(21, 0), 3600, 0.0,
+                    "vivaldi.exe", "講義動画 - YouTube", media_sec=3400)]
+    summary = rollup.summarize_day(records)
+    assert summary["away_sec"] == 0
+    assert summary["passive_sec"] == 3600
+    assert summary["net_sec"] == 0
+
+
+def test_受動はslack率を汚さない():
+    # 動画を観た日の slack 率が「だらけていた」に化けないこと
+    records = [span(_at(9, 0), _at(10, 0), 3600, 1800),
+               span(_at(20, 0), _at(21, 0), 3600, 0.0,
+                    "vivaldi.exe", "講義動画 - YouTube", media_sec=3600)]
+    summary = rollup.summarize_day(records)
+    assert summary["slack_ratio"] == pytest.approx(0.5)
+
+
+def test_開きっぱなしのタブは受動に数えない():
+    # 音が出ていなければ「開いていた」だけ。観ていた証拠が無い
+    records = [span(_at(2, 0), _at(4, 0), 7200, 0.0,
+                    "vivaldi.exe", "動画 - YouTube", media_sec=0.0)]
+    summary = rollup.summarize_day(records)
+    assert summary["passive_sec"] == 0
+    assert summary["away_sec"] == 7200
+
+
+def test_通知音程度の再生では受動にしない():
+    records = [span(_at(2, 0), _at(4, 0), 7200, 0.0,
+                    "vivaldi.exe", "動画 - YouTube", media_sec=60.0)]
+    summary = rollup.summarize_day(records)
+    assert summary["passive_sec"] == 0
+
+
+def test_受動ブロックはタイトルを持つのでラベルを聞かない():
+    records = [span(_at(20, 0), _at(21, 0), 3600, 0.0,
+                    "vivaldi.exe", "講義動画 - YouTube", media_sec=3600)]
+    summary = rollup.summarize_day(records)
+    assert summary["away_blocks"] == []
+    assert summary["passive_blocks"][0]["title"] == "講義動画 - YouTube"

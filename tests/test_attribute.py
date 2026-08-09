@@ -65,3 +65,24 @@ def test_日付を逆に渡しても動く(tmp_path):
 def test_大文字小文字を区別しない(tmp_path):
     write_day(tmp_path, "2026-08-01", [("09:00:00", "10:00:00", 3600, 3600, "Main.PY")])
     assert len(attribute.collect(tmp_path, "main.py", "2026-08-01", "2026-08-01")) == 1
+
+
+def write_media_day(raw_dir, date, spans):
+    """再生していたスパン（無入力・音あり）を書く。"""
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"t": "span", "start": f"{date}T{s}+09:00",
+                         "end": f"{date}T{e}+09:00", "sec": sec, "active_sec": 0.0,
+                         "media_sec": sec, "proc": "vivaldi.exe", "title": title},
+                        ensure_ascii=False)
+             for s, e, sec, title in spans]
+    (raw_dir / f"{date}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_観ていた時間もタスクの所要時間に入れる(tmp_path):
+    # 講義映像は手が動かない。入力だけで測るとその科目が実際より軽く見える
+    write_media_day(tmp_path, "2026-08-01",
+                    [("20:00:00", "21:00:00", 3600, "情報理論 第3回 - YouTube")])
+    days = attribute.collect(tmp_path, "情報理論", "2026-08-01", "2026-08-01")
+    assert days[0]["net_hours"] == pytest.approx(1.0)
+    assert days[0]["input_hours"] == 0.0
+    assert days[0]["passive_hours"] == pytest.approx(1.0)

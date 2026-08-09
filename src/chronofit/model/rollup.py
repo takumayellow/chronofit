@@ -4,6 +4,8 @@
 
 - **wall（在席）** 前景に何かが出ていて、ロックもスリープもしていなかった時間
 - **net（入力あり）** そのうち実際に手が動いていた時間
+- **受動（passive）** 手は止まっているが、前景が音を鳴らしていた時間。動画・講義映像。
+  net にも離席にも入れず、第3の状態として分けて持つ
 - **離席ブロック** ロック・スリープ・無入力・データ欠落を1つに束ねたもの。
   L2 のラベル付け対象はここだけで、長さは既に秒単位で分かっている
 
@@ -18,6 +20,8 @@ from datetime import datetime, timedelta
 
 MIN_AWAY_SEC = 900.0        # これ以上の離席だけラベルを聞く（15分）
 HOLE_TOLERANCE_SEC = 120.0  # これ以下の記録の隙間はサンプリングの揺らぎとみなす
+MEDIA_SHARE = 0.5           # 無入力スパンのうち音が出ていた割合がこれ以上なら「観ていた」
+MIN_PASSIVE_SEC = 300.0     # これ未満の再生は通知音等の可能性があるので数えない（5分）
 LOCKED_PROC = "__locked__"
 NO_WINDOW_PROC = "__none__"
 
@@ -27,6 +31,7 @@ REASON_LABELS = {
     "sleep": "スリープ/休止",
     "no_data": "PC停止/未収集",
     "idle": "無入力（画面は出たまま）",
+    "media": "再生中（手は止まっている）",
 }
 
 
@@ -66,30 +71,37 @@ def to_segments(records, hole_tolerance=HOLE_TOLERANCE_SEC):
             if hole > hole_tolerance:
                 segments.append({
                     "start": previous_end, "end": start, "sec": hole,
-                    "kind": "away", "reason": "no_data", "active_sec": 0.0,
+                    "kind": "away", "reason": "no_data", "active_sec": 0.0, "media_sec": 0.0,
                     "proc": "", "title": "",
                 })
 
         if record["t"] == "gap":
             segments.append({
                 "start": start, "end": end, "sec": record.get("sec", 0.0),
-                "kind": "away", "reason": "sleep", "active_sec": 0.0,
+                "kind": "away", "reason": "sleep", "active_sec": 0.0, "media_sec": 0.0,
                 "proc": "", "title": "",
             })
         else:
             proc = record.get("proc", "")
             active = record.get("active_sec", 0.0)
+            media = record.get("media_sec", 0.0) or 0.0
+            length = record.get("sec", 0.0)
             if proc == LOCKED_PROC:
                 kind, reason = "away", "locked"
-            elif active <= 0.0:
+            elif active > 0.0:
+                kind, reason = "present", None
+            elif media > 0.0 and media >= length * MEDIA_SHARE:
+                # 手は動いていないが前景が音を鳴らしていた。動画・講義映像を観ていた
+                # 時間で、離席ではない。net（入力あり）でもないので別に持つ。
+                kind, reason = "passive", "media"
+            else:
                 # 前景はあるが手が動いていない。席にいるのか離れたのかは
                 # ここでは決められないので、ラベル対象へ回す。
                 kind, reason = "away", "idle"
-            else:
-                kind, reason = "present", None
             segments.append({
-                "start": start, "end": end, "sec": record.get("sec", 0.0),
+                "start": start, "end": end, "sec": length,
                 "kind": kind, "reason": reason, "active_sec": active,
+                "media_sec": media,
                 "proc": proc, "title": record.get("title", ""),
             })
 
@@ -133,19 +145,56 @@ def away_blocks(segments, min_sec=MIN_AWAY_SEC):
     return blocks
 
 
+def passive_blocks(segments, min_sec=MIN_PASSIVE_SEC):
+    """連続する受動セグメント（再生中）を束ねる。
+
+    離席ブロックと違ってラベルを聞かない。前景のタイトルが残っているので、
+    何を観ていたかは既に分かっているため。人に聞くのは分からないことだけにする。
+    """
+    blocks = []
+    run = []
+
+    def flush():
+        if run:
+            total = sum(s["sec"] for s in run)
+            if total >= min_sec:
+                longest = max(run, key=lambda s: s["sec"])
+                blocks.append({"start": run[0]["start"], "end": run[-1]["end"],
+                               "sec": total, "proc": longest["proc"],
+                               "title": longest["title"]})
+        run.clear()
+
+    for segment in segments:
+        if segment["kind"] == "passive":
+            run.append(segment)
+        else:
+            flush()
+    flush()
+    return blocks
+
+
 def by_title(segments):
-    """(プロセス, タイトル) ごとに net / wall を集計する。学習曲線のキーの元になる。"""
+    """(プロセス, タイトル) ごとに net / passive / wall を集計する。
+
+    受動を別列で持つのは、足し合わせると「入力ありの時間」の意味が壊れるから。
+    講義映像は passive_sec のほうが作業時間に近く、娯楽の動画は net でも作業でもない。
+    どちらなのかはタイトル規則（`title_rules`）が決める。
+    """
     table = {}
     for segment in segments:
-        if segment["kind"] != "present":
+        if segment["kind"] not in ("present", "passive"):
             continue
         key = (segment["proc"], segment["title"])
         row = table.setdefault(key, {"proc": segment["proc"], "title": segment["title"],
-                                     "wall_sec": 0.0, "net_sec": 0.0, "spans": 0})
-        row["wall_sec"] += segment["sec"]
-        row["net_sec"] += segment["active_sec"]
+                                     "wall_sec": 0.0, "net_sec": 0.0,
+                                     "passive_sec": 0.0, "spans": 0})
+        if segment["kind"] == "present":
+            row["wall_sec"] += segment["sec"]
+            row["net_sec"] += segment["active_sec"]
+        else:
+            row["passive_sec"] += segment["sec"]
         row["spans"] += 1
-    return sorted(table.values(), key=lambda r: -r["net_sec"])
+    return sorted(table.values(), key=lambda r: -(r["net_sec"] + r["passive_sec"]))
 
 
 def summarize_day(records, min_away_sec=MIN_AWAY_SEC):
@@ -155,11 +204,16 @@ def summarize_day(records, min_away_sec=MIN_AWAY_SEC):
     wall = sum(s["sec"] for s in present)
     net = sum(s["active_sec"] for s in present)
     away = sum(s["sec"] for s in segments if s["kind"] == "away")
+    passive = sum(s["sec"] for s in segments if s["kind"] == "passive")
 
     return {
         "wall_sec": wall,
         "net_sec": net,
         "away_sec": away,
+        # 受動は wall にも away にも足さない。足すと slack 率（net/wall）が
+        # 「動画を観ていた日はだらけていた」という別の意味に化ける。
+        "passive_sec": passive,
+        "passive_blocks": passive_blocks(segments),
         # 在席していたのに手が動いていなかった割合が slack。0除算は「データ無し」を意味する
         # ので 0.0 ではなく None にする（0.0 だと「一切集中していない」と読めてしまう）。
         "slack_ratio": (net / wall) if wall else None,
@@ -189,7 +243,12 @@ def format_summary(summary, date_label=""):
     ratio = summary["slack_ratio"]
     ratio_text = f"{ratio:.0%}" if ratio is not None else "データ無し"
     lines.append(f"{date_label}  在席 {wall / 3600:.1f}h  入力あり {net / 3600:.1f}h "
-                 f"(slack率 {ratio_text})  離席 {summary['away_sec'] / 3600:.1f}h")
+                 f"(slack率 {ratio_text})  受動 {summary.get('passive_sec', 0.0) / 3600:.1f}h"
+                 f"  離席 {summary['away_sec'] / 3600:.1f}h")
+
+    for block in summary.get("passive_blocks", []):
+        lines.append(f"    {block['start']:%H:%M}-{block['end']:%H:%M} "
+                     f"{block['sec'] / 60:5.0f}分  再生 {block['title'][:44]}")
 
     unlabeled = [b for b in summary["away_blocks"] if not b.get("label")]
     if summary["away_blocks"]:
@@ -201,5 +260,8 @@ def format_summary(summary, date_label=""):
                          f"{block['sec'] / 60:5.0f}分  {mark}")
 
     for row in summary["titles"][:10]:
-        lines.append(f"    {row['net_sec'] / 60:5.0f}分  {row['proc']:20.20} {row['title'][:52]}")
+        passive = row.get("passive_sec", 0.0)
+        mark = f"(+受動 {passive / 60:.0f}分)" if passive else ""
+        lines.append(f"    {row['net_sec'] / 60:5.0f}分  {row['proc']:20.20} "
+                     f"{row['title'][:52]}{mark}")
     return "\n".join(lines)
