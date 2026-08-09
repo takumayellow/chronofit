@@ -36,6 +36,15 @@ def rollup_dir():
     return data_root() / "rollup"
 
 
+def label_dir():
+    """離席ブロックに人が付けたラベル。
+
+    ロールアップは何度でも作り直せるが、人が付けたラベルは作り直せない。
+    再生成物と同じ場所に置くと、作り直しのたびに消す事故が起きる。
+    """
+    return data_root() / "labels"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)
