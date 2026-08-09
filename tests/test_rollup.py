@@ -150,3 +150,25 @@ def test_受動ブロックはタイトルを持つのでラベルを聞かな�
     summary = rollup.summarize_day(records)
     assert summary["away_blocks"] == []
     assert summary["passive_blocks"][0]["title"] == "講義動画 - YouTube"
+
+
+class TestRelativeDates:
+    """日付語を解けないと、日次の畳み込みをタスクスケジューラに任せられない。"""
+
+    def test_yesterday_is_one_day_before_today(self):
+        from datetime import datetime, timedelta
+
+        from chronofit.cli import _resolve_date
+
+        expected = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        assert _resolve_date("yesterday") == expected
+
+    def test_today_and_empty_agree(self):
+        from chronofit.cli import _resolve_date
+
+        assert _resolve_date("today") == _resolve_date(None)
+
+    def test_explicit_date_passes_through(self):
+        from chronofit.cli import _resolve_date
+
+        assert _resolve_date("2026-01-02") == "2026-01-02"

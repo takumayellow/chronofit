@@ -7,13 +7,20 @@
   「手で起動する」運用にはしない。管理者権限は不要（現在のユーザーとして登録する）。
 
   登録するタスク:
-    chronofit-collect   ログオン時に常駐開始。異常終了しても 5 分後に再起動する
+    chronofit-collect   ログオン時に常駐開始。異常終了しても 5 分後に再起動する。
+                        さらに 30 分ごとの見張りトリガを持たせて、再起動回数を
+                        使い切ったあとでも次の機会に自力で戻れるようにする
     chronofit-snapshot  ブラウザ履歴の日次退避。Chromium は履歴を勝手に刈るので、
                         撮り逃すと過去分は復旧できない
+    chronofit-rollup    前日ぶんの畳み込み。毎晩自動で回して、日次の集計が
+                        「思い出したときに手で打つ」ものにならないようにする
 
 .PARAMETER SnapshotTime
   スナップショットを走らせる時刻 (HH:mm)。既定 13:00。
   PC が落ちていて撮り逃した場合は次回の起動直後に自動で走る。
+
+.PARAMETER RollupTime
+  前日ぶんを畳む時刻 (HH:mm)。既定 03:00。
 
 .PARAMETER Prefix
   タスク名の接頭辞。既定 chronofit。
@@ -24,6 +31,7 @@
 [CmdletBinding()]
 param(
     [string]$SnapshotTime = '13:00',
+    [string]$RollupTime = '03:00',
     [string]$Prefix = 'chronofit'
 )
 
@@ -66,10 +74,15 @@ $collectSettings = New-ScheduledTaskSettingsSet @common `
 # 既定の 72 時間で打ち切られると常駐が黙って死ぬ。Zero = 無制限。
 $collectSettings.ExecutionTimeLimit = 'PT0S'
 
+# ログオン時だけだと、RestartCount を使い切った後は次のログオンまで空白になる。
+# 30 分ごとに起動を試み、生きていれば IgnoreNew で捨てられる（＝見張りとして働く）。
+$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 30)
+
 Register-ScheduledTask -TaskName "$Prefix-collect" -Force `
-    -Description 'chronofit: 前景ウィンドウと入力アイドルの収集（常駐）' `
+    -Description 'chronofit: 前景ウィンドウと入力アイドルの収集（常駐 + 30分ごとの見張り）' `
     -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit collect') `
-    -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) `
+    -Trigger @((New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME), $watchdog) `
     -Settings $collectSettings | Out-Null
 
 # --- ブラウザ履歴スナップショット -------------------------------------------
@@ -81,6 +94,17 @@ Register-ScheduledTask -TaskName "$Prefix-snapshot" -Force `
     -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit snapshot') `
     -Trigger (New-ScheduledTaskTrigger -Daily -At $SnapshotTime) `
     -Settings $snapshotSettings | Out-Null
+
+# --- 前日ぶんの畳み込み -----------------------------------------------------
+# 収集しただけでは日次の姿が見えない。畳むのを人手に残すと、忙しい日ほど飛ぶ。
+$rollupSettings = New-ScheduledTaskSettingsSet @common -MultipleInstances IgnoreNew
+$rollupSettings.ExecutionTimeLimit = 'PT10M'
+
+Register-ScheduledTask -TaskName "$Prefix-rollup" -Force `
+    -Description 'chronofit: 前日ぶんを畳んで net/wall/離席に分ける（日次）' `
+    -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit rollup --date yesterday') `
+    -Trigger (New-ScheduledTaskTrigger -Daily -At $RollupTime) `
+    -Settings $rollupSettings | Out-Null
 
 Get-ScheduledTask -TaskName "$Prefix-*" |
     Select-Object TaskName, State, @{n='Next';e={ ($_ | Get-ScheduledTaskInfo).NextRunTime }} |

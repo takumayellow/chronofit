@@ -140,7 +140,14 @@ def cmd_status(args):
 
 
 def _resolve_date(value):
-    """日付引数を解決する。既定は今日。"""
+    """日付引数を解決する。既定は今日。
+
+    `today` / `yesterday` を受けるのは、タスクスケジューラが日付を計算できないため。
+    「前日ぶんを毎晩畳む」を人手ゼロで回すには、日付側が相対語を解せる必要がある。
+    """
+    relative = {"today": 0, "yesterday": 1}
+    if value in relative:
+        return (datetime.now() - timedelta(days=relative[value])).strftime("%Y-%m-%d")
     return value or datetime.now().strftime("%Y-%m-%d")
 
 
@@ -501,11 +508,11 @@ def build_parser():
     status.set_defaults(func=cmd_status)
 
     rollup_cmd = sub.add_parser("rollup", help="1日分を畳んで net/wall/離席に分ける")
-    rollup_cmd.add_argument("--date", help="YYYY-MM-DD（既定は今日）")
+    rollup_cmd.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は今日）")
     rollup_cmd.set_defaults(func=cmd_rollup)
 
     label = sub.add_parser("label", help="離席ブロックにラベルを付ける")
-    label.add_argument("--date", help="YYYY-MM-DD（既定は今日）")
+    label.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は今日）")
     label.set_defaults(func=cmd_label)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
