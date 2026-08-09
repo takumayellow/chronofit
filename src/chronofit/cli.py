@@ -10,6 +10,7 @@
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
     python -m chronofit capacity             習慣を引いた、実際に割り当てられる時間
+    python -m chronofit plan tasks.json      タスク一覧を週の容量へ割り付ける
     python -m chronofit coverage             所要時間DBに何が溜まっているか
     python -m chronofit backfill-clockify F  過去の Clockify CSV を取り込む
 """
@@ -23,6 +24,7 @@ from pathlib import Path
 from . import config, paths
 from .collect import daemon
 from .estimate import attribute, curve, kinds, offpc, slack
+from .plan import fit
 from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
@@ -272,6 +274,60 @@ def cmd_capacity(args):
     return 0
 
 
+def cmd_plan(args):
+    """タスク一覧を、使える容量へ週単位で割り付ける。
+
+    入りきらなかったものを**必ず名指しで出す**。容量を超えているという事実こそが、
+    計画を立てて分かるべきことなので、黙って削ると計画の意味が無くなる。
+    """
+    settings = config.load()
+    try:
+        spec = json.loads(args.tasks.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"タスク定義を読めない: {error}")
+        return 1
+    tasks = spec.get("tasks") if isinstance(spec, dict) else spec
+    if not tasks:
+        print("タスクが空。{\"tasks\": [{\"subject\": ..., \"kind\": ...}]} の形で渡す。")
+        return 1
+
+    until = datetime.strptime(args.until, "%Y-%m-%d").date()
+    hours_by_type = dict(settings.get("capacity_hours") or {})
+    hours_by_type.setdefault("平日", args.hours)
+    hours_by_type.setdefault("休日", args.hours)
+    hours_by_type.setdefault("出社", args.workday_hours)
+
+    day_types = settings.get("day_types", {})
+    result = fit.make(tasks, _instances(), hours_by_type, until, settings,
+                      _slack_buckets(settings),
+                      weekend_days=tuple(day_types.get("weekend", (5, 6))),
+                      workdays=tuple(day_types.get("workdays", ())))
+
+    print(f"需要 {result['demand']:.0f}h(net) / 供給 {result['supply']:.0f}h(net)"
+          f"  〜{args.until}")
+    if result["unknown_days"]:
+        print(f"  slack 率の無い日が {result['unknown_days']}日ある。"
+              f"その日ぶんは供給に数えていない（過小に出ている）")
+
+    for week in result["placed"]:
+        if not week["items"]:
+            continue
+        print(f"\n[{week['week']} の週]  残り {week['left']:.1f}h")
+        for item in week["items"]:
+            target = f" {item['target']}" if item.get("target") else ""
+            print(f"  {item['hours']:5.1f}h  {item['subject']} {item['kind']}"
+                  f"{target}（{item['index']}本目・{item['basis']}）")
+
+    if result["overflow"]:
+        print("\n入りきらなかったもの:")
+        for item in result["overflow"]:
+            hours = f"{item['hours']:.1f}h" if item["hours"] is not None else "見積もり無し"
+            print(f"  {hours}  {item['subject']} {item['kind']}"
+                  f"（{item['index']}本目）— {item['reason']}")
+        print("  → 減らすか、締切を動かすか、1日の持ち時間を増やすかを決める")
+    return 0
+
+
 def cmd_estimate(args):
     """1インスタンスの見積もり。根拠を必ず一緒に出す。
 
@@ -451,6 +507,15 @@ def build_parser():
     capacity.add_argument("--days", type=int, help="この日数ぶんの合計も出す")
     capacity.add_argument("--day-type", default="平日", help="slack 率を引く日タイプ")
     capacity.set_defaults(func=cmd_capacity)
+
+    plan_cmd = sub.add_parser("plan", help="タスク一覧を週の容量へ割り付ける")
+    plan_cmd.add_argument("tasks", type=Path, help="タスク定義の JSON")
+    plan_cmd.add_argument("--until", required=True, help="いつまでに YYYY-MM-DD")
+    plan_cmd.add_argument("--hours", type=float, default=8.0,
+                          help="平日・休日の1日の持ち時間（暦）")
+    plan_cmd.add_argument("--workday-hours", type=float, default=3.0,
+                          help="出社日の1日の持ち時間（暦）")
+    plan_cmd.set_defaults(func=cmd_plan)
 
     coverage = sub.add_parser("coverage", help="所要時間DBの中身")
     coverage.set_defaults(func=cmd_coverage)

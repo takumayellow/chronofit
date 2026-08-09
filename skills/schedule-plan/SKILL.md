@@ -75,6 +75,15 @@ python -m chronofit slack     # 日タイプごとの slack 率（平日 / 休�
 python -m chronofit capacity --days N     # 暦 - 習慣 = 割り当て可能。slack 率があれば実作業ぶんまで
 ```
 
+```bash
+python -m chronofit plan <tasks.json> --until YYYY-MM-DD   # 週の容量へ割り付ける
+```
+
+`tasks.json` は `{"tasks": [{"subject", "kind", "count", "due", "assumed_hours"}]}`。
+`count` を2以上にすると通し番号を進めながら展開するので、「過去問5本」が平らな5倍にならない。
+`plan` は**入りきらなかったものを必ず名指しで返す**。そこがこのコマンドの本体で、
+「間に合わない」と分かることが計画の価値なので、収まるように数字を丸めない。
+
 - 容量は**暦時間**で持つ。カレンダーの既存予定・出社日・固定の拘束を先に引く。
 - 締切のあるものから earliest-fit。締切は課題管理（Jira 等）の due date を正とする。
 - 1日に詰め込みすぎない。実測の日次上限を超える配置はしない。

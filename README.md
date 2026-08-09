@@ -77,6 +77,7 @@ python -m chronofit done 応用数学B 過去問 --offpc        # 紙でやっ�
 python -m chronofit estimate 応用数学B 過去問   # (科目, 種別, 何本目) の見積もり
 python -m chronofit slack                       # 日タイプごとの slack 率
 python -m chronofit capacity --days 30          # 暦 - 習慣 = 割り当て可能な時間
+python -m chronofit plan tasks.json --until 2026-09-14   # 週の容量へ割り付ける
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
 python -m chronofit history --days 14           # ブラウザ履歴を分類して過去を埋める
 
