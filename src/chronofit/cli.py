@@ -142,9 +142,16 @@ def cmd_status(args):
     if latest:
         # 「いま取れているか」はプロセスの生死ではなく**最後の記録がいつか**で決まる。
         # 常駐しているのに書けていない（権限・例外）状態を、生きている扱いにしない。
-        behind = (datetime.now().astimezone() - datetime.fromisoformat(latest)).total_seconds()
+        #
+        # ただし前景が変わらない間（PDF・動画）スパンは MAX_SPAN_SEC まで書き出されない。
+        # 閾値をそこに揃えると、健全な収集を「遅れている」と言ってしまう。倍を取る。
+        stale_after = daemon.MAX_SPAN_SEC * 2
+        last = datetime.fromisoformat(latest)
+        if last.tzinfo is None:      # 手で書いた・古い形式のログ。ローカル時刻とみなす
+            last = last.astimezone()
+        behind = (datetime.now().astimezone() - last).total_seconds()
         print(f"  最終記録: {latest[11:19]}（{behind / 60:.0f}分前）"
-              + ("  ** 遅れている **" if behind > 300 else ""))
+              + ("  ** 遅れている **" if behind > stale_after else ""))
     return 0
 
 

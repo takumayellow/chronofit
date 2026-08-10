@@ -47,7 +47,8 @@ def read_day(path):
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if record.get("t") in ("span", "gap"):
+        # 時刻を欠いた行も捨てる。1行の欠損で1日分が読めなくなるほうが損。
+        if record.get("t") in ("span", "gap") and record.get("start") and record.get("end"):
             records.append(record)
     records.sort(key=lambda r: r["start"])
     return records

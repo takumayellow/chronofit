@@ -61,6 +61,32 @@ def test_最終記録の時刻が出る(tmp_path, monkeypatch, capsys):
     assert "遅れている" not in out
 
 
+def test_長いスパンを畳んでいる最中を遅れと呼ばない(tmp_path, monkeypatch, capsys):
+    """前景が変わらない間、スパンは MAX_SPAN_SEC まで書き出されない。
+
+    閾値をそこに揃えると、PDF を読み続けているだけの健全な収集を「止まっている」と
+    言ってしまう。それは今回直したかった誤解そのもの。
+    """
+    open_span = datetime.now().astimezone() - timedelta(minutes=6)
+    _write(tmp_path, monkeypatch, [
+        _span((open_span - timedelta(minutes=5)).isoformat(timespec="seconds"),
+              open_span.isoformat(timespec="seconds"), 300, 300)])
+
+    cli.cmd_status(argparse.Namespace(days=7))
+    assert "遅れている" not in capsys.readouterr().out
+
+
+def test_時刻を欠いた行があっても読める(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv(paths.ENV_ROOT, str(tmp_path))
+    raw = paths.ensure(paths.raw_dir())
+    (raw / "2026-08-09.jsonl").write_text(
+        json.dumps({"t": "span", "sec": 300}) + "\n"
+        + json.dumps(_span(_at(9, 0), _at(10, 0), 3600, 3600)) + "\n", encoding="utf-8")
+
+    cli.cmd_status(argparse.Namespace(days=7))
+    assert "在席  1.0h" in capsys.readouterr().out
+
+
 def test_記録が止まっていれば遅れを明示する(tmp_path, monkeypatch, capsys):
     stale = datetime.now().astimezone() - timedelta(hours=3)
     _write(tmp_path, monkeypatch, [
