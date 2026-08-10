@@ -66,7 +66,22 @@ def to_segments(records, hole_tolerance=HOLE_TOLERANCE_SEC):
     for record in records:
         start, end = _parse(record["start"]), _parse(record["end"])
 
+        if record["t"] == "span":
+            # 記録された `start` は最初のサンプルを撮った時刻で、そのサンプルが代表するのは
+            # **直前の1間隔**（デーモンは interval 秒眠ってから撮る）。したがって実際に
+            # 覆っている範囲は `[end - sec, end]` になる。
+            #
+            # 補正しないと1スパンにつき interval 秒（15秒 × 1日 200本 ≒ 50分）が
+            # どこにも属さない隙間として落ちる。合計値は `sec` から出しているので狂わないが、
+            # 時刻で描くタイムラインだけが櫛の歯になり、「測れていない」ように見える。
+            length = record.get("sec", 0.0) or 0.0
+            if length > (end - start).total_seconds():
+                start = end - timedelta(seconds=length)
+
         if previous_end is not None:
+            # 前のセグメントへ食い込ませない。重ねて描くと、同じ時刻に2つの状態が
+            # 立っている絵になり、どちらが本当か読めなくなる。
+            start = max(start, min(previous_end, end))
             hole = (start - previous_end).total_seconds()
             if hole > hole_tolerance:
                 segments.append({

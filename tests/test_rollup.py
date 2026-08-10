@@ -62,6 +62,31 @@ def test_サンプリングの揺らぎ程度の隙間は埋めない():
     assert [s for s in rollup.to_segments(records) if s["reason"] == "no_data"] == []
 
 
+def test_スパンは最初のサンプルの1間隔前から覆っている():
+    """デーモンは interval 秒眠ってから撮るので、`start` の 1間隔前から覆っている。
+
+    実データの形（sec=300 に対し end-start=285）。補正しないと1スパンにつき 15秒、
+    1日で約50分が**どこにも属さない隙間**になり、時刻で描いた図が櫛の歯になる。
+    合計は `sec` から出しているので狂わないぶん、気付きにくい。
+    """
+    records = [span(_at(0, 0, 12), _at(0, 4, 57), 300, 300),
+               span(_at(0, 5, 12), _at(0, 9, 57), 300, 300)]
+    segments = rollup.to_segments(records)
+    assert segments[0]["end"] == segments[1]["start"]      # 隙間ゼロで繋がる
+    assert [s for s in segments if s["reason"] == "no_data"] == []
+    for segment in segments:
+        assert (segment["end"] - segment["start"]).total_seconds() == segment["sec"]
+
+
+def test_覆っている範囲を戻しても前のスパンへ食い込まない():
+    # sec が実時刻幅より大きく食い違うと、戻した start が前のスパンの中へ入る。
+    # 重ねて描くと同じ時刻に2つの状態が立った絵になる
+    records = [span(_at(0, 0), _at(0, 5), 300, 300),
+               span(_at(0, 5), _at(0, 10), 900, 900)]
+    segments = rollup.to_segments(records)
+    assert segments[1]["start"] == segments[0]["end"]
+
+
 def test_短い離席はラベルを聞かない():
     records = [span(_at(9, 0), _at(9, 15), 900, 900),
                span(_at(9, 15), _at(9, 20), 300, 0.0),   # 5分の無入力

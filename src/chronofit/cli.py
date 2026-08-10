@@ -118,26 +118,33 @@ def cmd_status(args):
         return 1
 
     print(f"  収集日数: {len(files)}日  ({files[0].stem} - {files[-1].stem})")
+    # 畳み方は rollup と同じものを使う。ここだけ独自に数えると、同じ日について
+    # status と report が違う「在席」を言う。実際それで「測れていない」ように見えた。
+    latest = None
     for path in files[-args.days:]:
-        spans = active = total = 0
-        gap = 0.0
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if record.get("t") == "span":
-                spans += 1
-                total += record.get("sec", 0)
-                active += record.get("active_sec", 0)
-            elif record.get("t") == "gap":
-                gap += record.get("sec", 0)
-        share = (active / total) if total else 0.0
-        print(f"  {path.stem}  spans={spans:5}  在席{total / 3600:5.1f}h  "
-              f"入力あり{active / 3600:5.1f}h ({share:4.0%})  離席/休止{gap / 3600:5.1f}h")
+        records = rollup.read_day(path)
+        if not records:
+            print(f"  {path.stem}  記録なし")
+            continue
+        summary = rollup.summarize_day(records)
+        latest = max(latest or "", records[-1]["end"])
+        ratio = summary["slack_ratio"]
+        print(f"  {path.stem}  spans={len(records):5}  "
+              f"記録{sum(r.get('sec', 0) for r in records) / 3600:5.1f}h  "
+              f"在席{summary['wall_sec'] / 3600:5.1f}h  "
+              f"入力あり{summary['net_sec'] / 3600:5.1f}h "
+              f"({'  --' if ratio is None else f'{ratio:4.0%}'})  "
+              f"受動{summary['passive_sec'] / 3600:4.1f}h  "
+              f"離席{summary['away_sec'] / 3600:5.1f}h")
 
     lock = paths.data_root() / "collector.pid"
     print(f"  常駐: {'稼働中 pid=' + lock.read_text(encoding='utf-8').strip() if lock.exists() else '停止'}")
+    if latest:
+        # 「いま取れているか」はプロセスの生死ではなく**最後の記録がいつか**で決まる。
+        # 常駐しているのに書けていない（権限・例外）状態を、生きている扱いにしない。
+        behind = (datetime.now().astimezone() - datetime.fromisoformat(latest)).total_seconds()
+        print(f"  最終記録: {latest[11:19]}（{behind / 60:.0f}分前）"
+              + ("  ** 遅れている **" if behind > 300 else ""))
     return 0
 
 
