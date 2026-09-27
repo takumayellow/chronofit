@@ -446,3 +446,18 @@ def agenda_for_day(day):
                 if datetime.fromisoformat(event["end"].replace("Z", "+00:00")) > now]
     stays, places = _stays_and_places()
     return agenda.check(events, stays, _homes(places), now=now), upcoming
+
+
+def refresh_calendar(day):
+    """`day` から先の予定を取り直して写しを入れ替える。取れなければ写しのまま（False）。
+
+    日次の取り直しは翌朝なので、それだけだと今日消した予定が今日のレポートに残る。
+    """
+    root = paths.ensure(paths.calendar_dir())
+    try:
+        since, until = gcal.window(day)
+        rows = gcal.fetch(root, since, until)
+    except Exception:                 # noqa: BLE001 - 取れなければ手元の写しで出す
+        return False
+    gcal.save(root, gcal.replace_window(gcal.load(root), rows, since, until))
+    return True

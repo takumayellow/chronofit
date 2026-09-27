@@ -94,6 +94,23 @@ def test_ゆっくり歩いた経路を1つの滞在にしない():
     assert all((s[1] - s[0]).total_seconds() < 5 * 60 for s in segments if s[2] is not None)
 
 
+def test_止まっている間に点が来なくても出発の直前まで居たとみなす():
+    # 着いたときと歩き出した直後にしか点が来ない（店で84分、1点も来なかった実測の形）
+    points = [point(at(17, 20), 0.0, 0.0),
+              point(at(17, 23), 0.01, 0.0), point(at(18, 47), 0.0106, 0.0),   # 店、約70m 先で出発
+              point(at(18, 48), 0.004, 0.0), point(at(18, 50), 0.0, 0.0)]
+    stays = location.to_stays(owntracks.to_segments(points), [HOME, SHOP])
+    shop = next(s for s in stays if s["place"] == "店")
+    assert (shop["start"], shop["end"]) == (at(17, 23).isoformat(), at(18, 47).isoformat())
+
+
+def test_空白明けに遠くにいたら滞在を延ばさない():
+    points = [point(at(12), 0.0, 0.0), point(at(12, 10), 0.0, 0.0),
+              point(at(13, 30), 0.05, 0.0), point(at(13, 40), 0.05, 0.0)]
+    segments = owntracks.to_segments(points)
+    assert (segments[0][0], segments[0][1]) == (at(12), at(12, 10))
+
+
 def test_長い空白は家に数えずどこにも数えない():
     points = [point(at(8), 0.0, 0.0), point(at(8, 10), 0.0, 0.0),
               point(at(20), 0.0, 0.0), point(at(20, 10), 0.0, 0.0)]
