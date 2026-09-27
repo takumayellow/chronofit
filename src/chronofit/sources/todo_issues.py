@@ -19,6 +19,9 @@ KIND = "Issue"
 PRIORITIES = {"P1": "S", "P2": "A", "P3": "B"}
 DEFAULT_SUBJECT = "todo"
 TIMEOUT = 60
+# 定期実行は窓の無い pythonw から走るので、コンソールの gh を素で起動すると
+# そのたびに窓が開く（Windows 以外では 0 で何もしない）
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # gh の引数に渡す前に形を確かめる（`-` で始まる値をフラグとして読ませない）
 _OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
 _PRIORITY = re.compile(r"(P[123])(?::|$)")
@@ -28,7 +31,8 @@ _REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._][A-Za-z0-9._-]*")
 def gh_json(*args):
     try:
         done = subprocess.run(["gh", *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=TIMEOUT, check=False)
+                              encoding="utf-8", timeout=TIMEOUT, check=False,
+                              creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise RuntimeError(f"gh を実行できなかった: {type(error).__name__}") from error
     if done.returncode != 0:
