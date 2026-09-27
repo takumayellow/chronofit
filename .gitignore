@@ -17,5 +17,6 @@ places.json
 sources.json
 activities.json
 events.json
+tasks.json
 *.bin
 .env
