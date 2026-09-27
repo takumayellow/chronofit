@@ -31,6 +31,8 @@ def work_groups(day, settings):
 
 
 def agenda(day):
+    if day == date_type.today().isoformat():
+        cli_outing.refresh_calendar(day)   # 今日消した・動かした予定を反映する
     checked, upcoming = cli_outing.agenda_for_day(day)
     return {"checked": checked, "upcoming": upcoming}
 

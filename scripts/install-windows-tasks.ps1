@@ -15,6 +15,8 @@
     chronofit-daily     前日ぶんの畳み込み + その日の進捗の記録。毎晩自動で回して、
                         日次の集計と現在地が「思い出したときに手で打つ」ものに
                         ならないようにする
+    chronofit-refresh   今日の日次レポートを 30 分ごとに書き出し直す。位置はスマホから
+                        常時届くので、予定と実際の突き合わせを翌朝まで待たせない
     chronofit-location  スマホから位置を受け取る常駐（`chronofit location setup` 済みのときだけ）
 
 .PARAMETER SnapshotTime
@@ -111,6 +113,20 @@ Register-ScheduledTask -TaskName "$Prefix-daily" -Force `
     -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit daily') `
     -Trigger (New-ScheduledTaskTrigger -Daily -At $RollupTime) `
     -Settings $dailySettings | Out-Null
+
+# --- 今日のレポートの書き直し ----------------------------------------------
+# 日次の畳み込みは翌朝なので、それだけだと今日の予定と実際は夜が明けるまで見えない。
+# 位置は常時届いているので、30 分ごとに今日のページを作り直す（開かない）。
+$refreshSettings = New-ScheduledTaskSettingsSet @common -MultipleInstances IgnoreNew
+$refreshSettings.ExecutionTimeLimit = 'PT10M'
+$every30 = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(5) `
+    -RepetitionInterval (New-TimeSpan -Minutes 30)
+
+Register-ScheduledTask -TaskName "$Prefix-refresh" -Force `
+    -Description 'chronofit: 今日の日次レポートを 30 分ごとに書き出し直す' `
+    -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit report --no-open') `
+    -Trigger $every30 `
+    -Settings $refreshSettings | Out-Null
 
 # --- スマホからの位置の受け口 -----------------------------------------------
 # `chronofit location setup` を済ませたときだけ登録する。スマホ側のアプリは届かなかった

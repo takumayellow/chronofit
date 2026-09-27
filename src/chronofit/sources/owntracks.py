@@ -21,7 +21,10 @@ STAY_RADIUS_M = 100.0       # この半径に収まる点の並びを1つの滞�
 MIN_STAY_SEC = 5 * 60       # これより短い滞在は信号待ち等として移動に含める
 MAX_ACCURACY_M = 200.0      # 精度がこれより悪い点は捨てる（屋内の Wi-Fi 測位の飛び）
 MAX_TST = 4102444800        # 2100-01-01。これより先の時刻は壊れた値として捨てる
-MAX_GAP_SEC = 60 * 60       # 点の空白がこれを超えたら滞在も移動も続いているとみなさない
+MAX_GAP_SEC = 60 * 60       # 点の空白がこれを超えたら移動が続いているとみなさない
+MAX_STILL_GAP_SEC = 3 * 3600  # 同じ場所の点どうしなら、空白がこれ以内の間は居続けたとみなす
+DEPARTURE_RADIUS_M = 500.0  # 空白明けの点がこの距離なら、出発の直前まで前の場所にいたとみなす
+WALK_M_PER_SEC = 1.2        # 空白明けの点までの距離を歩いたぶん、出発を早める
 REQUEST_TIMEOUT_SEC = 15    # 読み込みが止まった接続を切る。溜まるとスレッドが増え続ける
 
 
@@ -100,13 +103,15 @@ def _longest_gap(times, start, end):
 
 
 def to_segments(points, radius_m=STAY_RADIUS_M, min_stay_sec=MIN_STAY_SEC,
-                max_gap_sec=MAX_GAP_SEC):
+                max_gap_sec=MAX_GAP_SEC, max_still_gap_sec=MAX_STILL_GAP_SEC):
     """点の列を (開始, 終了, 座標 or None) の区間へ。`location.to_stays` にそのまま渡せる。
 
     最初の点から半径内に収まる点が続く間を1つの滞在とし、その間を移動とする。
-    スマホは止まっている間まばらにしか送らないので、同じ場所の2点の間の空白も滞在に
-    数える。ただし `max_gap_sec` を超える空白は電源断や圏外かもしれず、そこで区切って
-    どこにも数えない（家→不明→家 を丸ごと家にしない）。
+    スマホは止まっている間ほとんど送らない（実測で店に84分いた間は1点も来なかった）ので、
+    同じ場所の2点の間の空白は `max_still_gap_sec` まで滞在に数える。空白明けの最初の点が
+    少し離れた所（歩き出した直後）なら、その点を歩いて移動したぶんだけ手前まで滞在を延ばす。
+    それより長い空白は電源断かもしれず、そこで区切ってどこにも数えない
+    （朝の家→不明→夜の家 を丸ごと家にしない）。移動の間の空白は `max_gap_sec` で区切る。
     """
     usable = sorted((p for p in points if float(p.get("acc") or 0) <= MAX_ACCURACY_M),
                     key=lambda p: int(p["tst"]))
@@ -116,10 +121,12 @@ def to_segments(points, radius_m=STAY_RADIUS_M, min_stay_sec=MIN_STAY_SEC,
         current = clusters[-1] if clusters else None
         # 平均からの距離で比べると、ゆっくり歩いた経路全体が1つの滞在に化ける
         if (current and location.distance_m(coords, current["anchor"]) <= radius_m
-                and (moment - current["end"]).total_seconds() <= max_gap_sec):
+                and (moment - current["end"]).total_seconds() <= max_still_gap_sec):
             current["members"].append(coords)
             current["end"] = moment
         else:
+            if current:
+                _extend_to_departure(current, coords, moment, max_still_gap_sec)
             clusters.append({"start": moment, "end": moment, "anchor": coords,
                              "members": [coords]})
 
@@ -136,6 +143,15 @@ def to_segments(points, radius_m=STAY_RADIUS_M, min_stay_sec=MIN_STAY_SEC,
                   sum(c[1] for c in stay["members"]) / count)
         result.append((stay["start"], stay["end"], center))
     return [segment for segment in result if segment[1] > segment[0]]
+
+
+def _extend_to_departure(cluster, coords, moment, max_still_gap_sec):
+    """空白明けの点が近くなら、そこまで歩いた時間を引いた時刻まで滞在を延ばす。"""
+    gap = (moment - cluster["end"]).total_seconds()
+    distance = location.distance_m(coords, cluster["anchor"])
+    if gap <= max_still_gap_sec and distance <= DEPARTURE_RADIUS_M:
+        departed = moment - timedelta(seconds=distance / WALK_M_PER_SEC)
+        cluster["end"] = max(cluster["end"], departed)
 
 
 def all_points(root):
