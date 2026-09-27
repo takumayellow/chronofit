@@ -20,6 +20,7 @@
     python -m chronofit slack                日タイプごとの slack 率
     python -m chronofit capacity             習慣を引いた、実際に割り当てられる時間
     python -m chronofit plan tasks.json      タスク一覧を週の容量へ割り付ける
+    python -m chronofit task sync            開いている Issue をやることの一覧へ写す
     python -m chronofit coverage             所要時間DBに何が溜まっているか
     python -m chronofit backfill-clockify F  過去の Clockify CSV を取り込む
 """
@@ -39,7 +40,7 @@ from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
 from .model import rollup
-from .sources import browser, clockify, history, location, owntracks
+from .sources import browser, clockify, history, location, owntracks, todo_issues
 from .ui import ask, report
 
 
@@ -650,8 +651,35 @@ def _tasks(path=None):
     return tasks_store.load(path or paths.tasks_path())
 
 
+def sync_issues(quiet=False):
+    """設定 `todo_project` があれば、開いている Issue を一覧へ写す。失敗しても止めない。
+
+    Issue 由来のタスクは毎回丸ごと取り替えるので、閉じた Issue はここで一覧から消える。
+    """
+    # daily / report から呼ばれるので、設定や一覧ファイルが壊れていても記録は止めない。
+    try:
+        project = config.load().get("todo_project")
+        if not project:
+            if not quiet:
+                print('設定に todo_project が無い（config.json に {"owner": ..., "number": ...}）',
+                      file=sys.stderr)
+            return 1
+        items, open_numbers = todo_issues.fetch(project["owner"], project["number"])
+        path = paths.tasks_path()
+        issue_tasks = todo_issues.to_tasks(items, open_numbers)
+        tasks_store.save(path, todo_issues.merge(_tasks(path), issue_tasks))
+    except (RuntimeError, KeyError, ValueError, TypeError, AttributeError, OSError) as error:
+        print(f"Issue を一覧へ写せなかった: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    if not quiet:
+        print(f"開いている Issue {len(issue_tasks)}件 -> {path}")
+    return 0
+
+
 def cmd_task(args):
     """やることの一覧を足す / 消す / 見る。進捗は持たせない（DBから数える）。"""
+    if args.action == "sync":
+        return sync_issues()
     path = paths.tasks_path()
     current = _tasks(path)
 
@@ -759,6 +787,7 @@ def cmd_daily(args):
     date = _resolve_date(args.date or "yesterday")
     failed = cmd_rollup(argparse.Namespace(date=date))
     cli_outing.fetch_if_authorized()
+    sync_issues(quiet=True)
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,
@@ -824,6 +853,8 @@ def cmd_report(args):
     # 「何の前後で離れたか」だけは見えるようにする。
     context_model.annotate(summary, settings.get("title_rules") or [])
 
+    if not args.tasks and date == datetime.now().strftime("%Y-%m-%d"):
+        sync_issues(quiet=True)            # 今日のページは、いま開いている Issue で数える
     rows, board_summary, as_of = _board_for(date, settings, args.tasks)
     sources = [
         ("この日の生スパン（1行1スパン・タイトル込み）", paths.raw_dir() / f"{date}.jsonl"),
@@ -947,7 +978,7 @@ def build_parser():
 
     task_cmd = sub.add_parser("task", help="やることの一覧を足す / 消す / 見る")
     task_cmd.add_argument("action", nargs="?", default="list",
-                          choices=("list", "add", "rm"))
+                          choices=("list", "add", "rm", "sync"))
     task_cmd.add_argument("subject", nargs="?", help="科目")
     task_cmd.add_argument("kind", nargs="?", help="種別（過去問 / 参考書 ...）")
     task_cmd.add_argument("--count", type=int, default=1, help="全部で何本やるか")

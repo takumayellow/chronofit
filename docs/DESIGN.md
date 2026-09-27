@@ -171,6 +171,15 @@ Windows API を ctypes で直に叩くので**依存パッケージゼロ**。
 | 未登録の場所 | `chronofit location spots` に、そこにいた時間に重なった予定の件名を添える（場所を登録するときの手掛かり） |
 | トークン | `calendar/calendar-token.bin`。Gmail とは別に同意を取り、同じく DPAPI で暗号化する |
 
+### やることの一覧は Issue を正本にする
+
+やることは GitHub の Issue（Project）で管理しているので、一覧を手で二重に持つと
+終わったものが「締め切り超過」のまま残る。設定 `todo_project` があれば、開いている Issue を
+一覧へ写す（`task sync`、`daily`、当日の `report`）。Issue 由来の行は毎回丸ごと取り替え、
+手で書いた行（`issue` を持たない行）は残す。優先度は `P1`〜`P3` ラベル、科目は残りの
+最初のラベル、締め切りは Project の Target、見積もりは `見積もり` 欄から取る。`gh` は
+読むだけで、件名は git の外の `tasks.json` にだけ残る。
+
 ### L3 所要時間DB（消費側）
 
 タスク1インスタンス = 1行:

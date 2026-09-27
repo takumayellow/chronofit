@@ -119,6 +119,7 @@ python -m chronofit estimate 応用数学B 過去問   # (科目, 種別, 何本
 python -m chronofit slack                       # 日タイプごとの slack 率
 python -m chronofit capacity --days 30          # 暦 - 習慣の実測 = 割り当て可能な時間
 python -m chronofit task add 応用数学B 過去問 --count 5 --due 2026-09-14  # やることを一覧へ
+python -m chronofit task sync                     # 開いている Issue を一覧へ写す
 python -m chronofit board                       # いまどこまで来ているか
 python -m chronofit plan --until 2026-09-14     # 残りを週の容量へ割り付ける
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
@@ -144,6 +145,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 嘘の進捗になるからで、記録を二重に付けさせないのはこの計測系全体の方針でもある。
 
 一覧は `%LOCALAPPDATA%\chronofit	asks.json` に1つだけ置く（`task add` / `task rm`）。
+設定 `todo_project`（`{"owner": ..., "number": ...}`）があれば、その GitHub Project で
+開いている Issue を `task sync` で一覧へ写す。`daily` と当日の `report` も毎回写すので、
+閉じた Issue は一覧から消え、締め切り（Project の Target）もそのまま付く。`gh` は読むだけ。
 `plan` は一覧から**終わったぶんを落として**割り付ける。目標本数をそのまま渡すと、2本
 終わった時点で「残り3本」ではなく「これから5本」の計画が出てしまう。
 
@@ -198,7 +202,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `calendar/events.json` | カレンダーの予定の時刻・件名・場所欄（説明文や参加者は残さない） | 取り直せばできる |
 | `calendar/calendar-token.bin` | カレンダー読み取り専用のトークン（DPAPI で暗号化） | 同意し直せばできる |
 | `report/<date>.html` | 1日の分析画面。生タイトルを含む | できる |
-| `tasks.json` | やることの一覧 | 手で書いたもの |
+| `tasks.json` | やることの一覧（Issue から写したものと手で書いたもの） | Issue 由来は `task sync` で戻る。手で書いたものは戻らない |
 | `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
 | `instances.jsonl` | 所要時間DB（終わったタスクの実測。`done` を打つまで出来ない） | できる |
 | `config.json` | 個人設定（科目名・分類ルール・容量・場所の座標） | 手で書いたもの |
