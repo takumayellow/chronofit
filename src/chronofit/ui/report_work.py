@@ -5,7 +5,7 @@ GitHub に残った成果、Claude の会話から割り付けた作業、カレ
 どれも取れなかったときは空欄にせず、取れなかった理由を1行出す。
 """
 import html as html_escape
-from datetime import datetime
+from datetime import datetime, timedelta
 
 MIN_SHOWN_SEC = 60   # これ未満の作業は行に出さない（合計には入れる）
 
@@ -79,6 +79,19 @@ def work_section(groups, present_net_sec):
             + "".join(rows) + "</table>")
 
 
+def _ahead(event, guess):
+    """これからの予定に、同じ場所の過去の予定から見た「出る・終わる」の目安を付ける。"""
+    if not guess:
+        return "これから"
+    start = datetime.fromisoformat(str(event["start"]).replace("Z", "+00:00"))
+    parts = [f"これから {guess['place']}"]
+    if guess.get("leave") is not None:
+        parts.append(f"{start + timedelta(minutes=guess['leave']):%H:%M} ごろ出る")
+    if guess.get("done") is not None:
+        parts.append(f"{start + timedelta(minutes=guess['done']):%H:%M} ごろ終わる")
+    return "・".join(parts) + f"（過去{guess['n']}回）"
+
+
 def agenda_section(agenda):
     """その日の予定と、実際にいた場所・時刻。"""
     failed = _failed(agenda)
@@ -96,9 +109,10 @@ def agenda_section(agenda):
                       f"{row.get('place') or ''}（{row['status']}）")
         rows.append(f"<tr><td class='n'>{_clock(event['start'])}–{_clock(event['end'])}</td>"
                     f"<td class='t'>{_e(event['title'])}</td><td>{_e(actual)}</td></tr>")
-    for event in upcoming:
+    for item in upcoming:
+        event = item["event"]
         rows.append(f"<tr><td class='n'>{_clock(event['start'])}–{_clock(event['end'])}</td>"
                     f"<td class='t'>{_e(event['title'])}</td>"
-                    "<td class='muted'>これから</td></tr>")
+                    f"<td class='muted'>{_e(_ahead(event, item.get('forecast')))}</td></tr>")
     return ("<table><tr><th>予定の時刻</th><th>予定</th><th>実際</th></tr>"
             + "".join(rows) + "</table>")

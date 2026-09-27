@@ -6,7 +6,9 @@
 - 件名 → 場所: 同じ件名の予定を同じ場所で2回以上こなしていれば、その件名の場所とみなす
 - 滞在の用事: 繰り返しの予定（同じ件名が3回以上）が滞在の半分以上を覆えば、その件名を用事にする
 - 未登録の場所: そこにいた時間に重なった予定の件名を、場所を登録するときの手掛かりにする
+- 先の予定: 同じ場所の過去の予定から、何分前に出て何分後に終わるかを見積もる（`forecast`）
 """
+import re
 from bisect import bisect_left
 from collections import Counter
 from datetime import datetime, timedelta
@@ -18,6 +20,8 @@ MIN_REPEAT = 3              # 用事として使う件名の最低回数（粒�
 MIN_PLACE_MATCH = 2         # 件名 → 場所とみなす最低回数
 JOIN_GAP = timedelta(minutes=10)
 MAX_EVENT = timedelta(days=1)
+MAX_LEAD = timedelta(hours=2)    # これより前に出ていたら、寄り道してから行ったとみなす
+MAX_BOOKING_GAP = timedelta(minutes=30)   # 着いた時刻と予定の開始がこれ以内の予定を「予約」とみなす
 
 
 def _t(value):
@@ -144,3 +148,66 @@ def spot_titles(stays, events):
             key = (round(stay["lat"], 3), round(stay["lng"], 3))
             result.setdefault(key, Counter()).update(titles)
     return result
+
+
+def _words(title):
+    return {word for word in re.split(r"[\s、,・/]+", title or "") if len(word) >= 2}
+
+
+def place_for(title, check_rows):
+    """件名から、その件名（か同じ語を含む件名）の予定をこなした場所を選ぶ。
+
+    件名は毎回同じとは限らない（「美容室」と「髪切る 〇〇」）。完全一致を先に見て、
+    無ければ語の重なる件名でこなした回数が一番多い場所を取る。
+    """
+    exact, loose = Counter(), Counter()
+    for row in check_rows:
+        if row["status"] != "外出" or not row["event"]["title"]:
+            continue
+        past = row["event"]["title"]
+        if past == title:
+            exact[row["place"]] += 1
+        elif _words(past) & _words(title):
+            loose[row["place"]] += 1
+    counts = exact or loose
+    return counts.most_common(1)[0][0] if counts else None
+
+
+def _median(values):
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2] if ordered else None
+
+
+def _left_before(stays, place, arrived):
+    """`arrived` の直前に、`place` 以外の場所を出た時刻。"""
+    before = [_t(s["end"]) for s in stays
+              if s.get("place") not in (None, location.MOVING, location.UNKNOWN, place)
+              and _t(s["end"]) <= arrived]
+    return max(before) if before else None
+
+
+def forecast(event, check_rows, stays, min_n=MIN_PLACE_MATCH):
+    """先の予定の場所と、過去にその場所へ行ったときの「出る・着く・終わる」の中央値（分）。
+
+    分は予定の開始からの差（負 = 前）。使うのは、着いた時刻の前後 30 分に始まった予定
+    （予約の時刻に合わせて行った予定）だけ。滞在の途中に重なっただけのリマインダ等は
+    「何分後に終わるか」を狂わせる。そういう過去が `min_n` 回未満なら None。
+    """
+    place = place_for(event["title"], check_rows)
+    if not place:
+        return None
+    past = [row for row in check_rows
+            if row["status"] == "外出" and row["place"] == place and row.get("actual_start")
+            and abs(row["actual_start"] - _t(row["event"]["start"])) <= MAX_BOOKING_GAP]
+    if len(past) < min_n:
+        return None
+    arrive, done, leave = [], [], []
+    for row in past:
+        start = _t(row["event"]["start"])
+        arrive.append((row["actual_start"] - start).total_seconds() / 60)
+        done.append((row["actual_end"] - start).total_seconds() / 60)
+        left = _left_before(stays, place, row["actual_start"])
+        if left and row["actual_start"] - left <= MAX_LEAD:
+            leave.append((left - start).total_seconds() / 60)
+    return {"place": place, "n": len(past), "arrive": _median(arrive),
+            "done": _median(done), "leave": _median(leave)}

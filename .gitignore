@@ -14,6 +14,7 @@ data/
 *.jsonl
 # 場所の座標・読む通知・店の対応・予定・トークン（CHRONOFIT_HOME を作業ツリーに向けても入れない）
 places.json
+auto_places.json
 sources.json
 activities.json
 events.json

@@ -351,7 +351,9 @@ def cmd_location(args):
     root = paths.location_dir()
     retention = _retention(settings)
     if args.action == "spots":
-        stays = cli_outing.all_stays(root, _places(settings))
+        # 自動登録した場所も手で名前を付け直せるよう、手の登録だけで当てる
+        stays = cli_outing.all_stays(root, location.load_places(root, settings.get("places"),
+                                                                auto=False))
         spots = location.unknown_spots(stays)
         titles = cli_outing.spot_titles(stays)
         if not spots:
