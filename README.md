@@ -178,6 +178,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | 個人設定・日次ロールアップ | 利用側の private リポジトリ | private |
 
 生イベントは「今まで開いた全ウィンドウの題名」なので、private リポジトリにも置かない。
+位置履歴も同じ扱いで、git の外に全部残し、rollup には場所名と秒だけを出す（docs/DESIGN.md L2）。
 `CHRONOFIT_HOME` で置き場所を上書きできる。
 
 `%LOCALAPPDATA%\chronofit\` の中身:
@@ -187,11 +188,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `raw/<date>.jsonl` | 1行1スパンの生ログ（タイトル込み） | **できない**（測り直せない） |
 | `rollup/<date>.json` | 畳んだ集計。タイトルは入らない | できる |
 | `labels/<date>.json` | 離席に人が付けたラベル | **できない**（人しか知らない） |
+| `location/points/<date>.jsonl` | スマホ（OwnTracks）から受け取った位置 | 取り逃すと戻らない |
+| `location/<date>.json` | タイムライン書き出しを畳んだ滞在（原本は `location/exports/`） | 書き出しがあればできる |
 | `report/<date>.html` | 1日の分析画面。生タイトルを含む | できる |
 | `tasks.json` | やることの一覧 | 手で書いたもの |
 | `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
 | `instances.jsonl` | 所要時間DB（終わったタスクの実測。`done` を打つまで出来ない） | できる |
-| `config.json` | 個人設定（科目名・分類ルール・容量） | 手で書いたもの |
+| `config.json` | 個人設定（科目名・分類ルール・容量・場所の座標） | 手で書いたもの |
 
 `report` が生タイトルを載せるのは、**自分が見るための面**だから。共有できる粒度は
 `rollup/` のほうで、そちらには意図的にタイトルを入れていない。

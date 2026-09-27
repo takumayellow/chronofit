@@ -15,6 +15,7 @@
     chronofit-daily     前日ぶんの畳み込み + その日の進捗の記録。毎晩自動で回して、
                         日次の集計と現在地が「思い出したときに手で打つ」ものに
                         ならないようにする
+    chronofit-location  スマホから位置を受け取る常駐（`chronofit location setup` 済みのときだけ）
 
 .PARAMETER SnapshotTime
   スナップショットを走らせる時刻 (HH:mm)。既定 13:00。
@@ -110,6 +111,24 @@ Register-ScheduledTask -TaskName "$Prefix-daily" -Force `
     -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit daily') `
     -Trigger (New-ScheduledTaskTrigger -Daily -At $RollupTime) `
     -Settings $dailySettings | Out-Null
+
+# --- スマホからの位置の受け口 -----------------------------------------------
+# `chronofit location setup` を済ませたときだけ登録する。スマホ側のアプリは届かなかった
+# 位置を溜めて再送するので、PC が起きている間だけ待ち受ければ足りる。
+# Tailscale より先に起動すると IP が無くて落ちるが、再起動と見張りで拾い直す。
+$receiver = Join-Path $env:LOCALAPPDATA 'chronofit\location\receiver.json'
+if ($env:CHRONOFIT_HOME) { $receiver = Join-Path $env:CHRONOFIT_HOME 'location\receiver.json' }
+if (Test-Path $receiver) {
+    $locationSettings = New-ScheduledTaskSettingsSet @common `
+        -MultipleInstances IgnoreNew `
+        -RestartInterval (New-TimeSpan -Minutes 5) -RestartCount 3
+    $locationSettings.ExecutionTimeLimit = 'PT0S'
+    Register-ScheduledTask -TaskName "$Prefix-location" -Force `
+        -Description 'chronofit: スマホ（OwnTracks）から位置を受け取る（常駐 + 30分ごとの見張り）' `
+        -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit location serve') `
+        -Trigger @((New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME), $watchdog) `
+        -Settings $locationSettings | Out-Null
+}
 
 Get-ScheduledTask -TaskName "$Prefix-*" |
     Select-Object TaskName, State, @{n='Next';e={ ($_ | Get-ScheduledTaskInfo).NextRunTime }} |

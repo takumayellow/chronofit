@@ -74,6 +74,16 @@ def report_dir():
     return data_root() / "report"
 
 
+def location_dir():
+    """スマホの位置履歴を畳んだ滞在。
+
+    ウィンドウタイトルよりさらに機微なので、ここも git の外に置く。中身は
+    日ごとの滞在（`*.json`）、スマホから受け取った点（`points/`）、
+    タイムライン書き出しの原本（`exports/`）、受け口の認証（`receiver.json`）。
+    """
+    return data_root() / "location"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)

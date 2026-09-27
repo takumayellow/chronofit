@@ -274,6 +274,9 @@ def format_summary(summary, date_label=""):
             mark = block.get("label") or f"? {block['reason_label']}"
             lines.append(f"    {block['start']:%H:%M}-{block['end']:%H:%M} "
                          f"{block['sec'] / 60:5.0f}分  {mark}")
+            if block.get("places"):
+                lines.append("          " + " / ".join(
+                    f"{part['place']} {part['sec'] / 60:.0f}分" for part in block["places"]))
 
     for row in summary["titles"][:10]:
         passive = row.get("passive_sec", 0.0)

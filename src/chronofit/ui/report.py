@@ -225,16 +225,19 @@ def _away_table(summary):
                      + hint)
         detail = block.get("detail") or {}
         extra = detail.get("detail") if isinstance(detail, dict) else None
+        where = " / ".join(f"{_e(part['place'])} {part['sec'] / 60:.0f}分"
+                           for part in block.get("places") or [])
         rows.append(f"<tr><td class='n'>{block['start']:%H:%M}-{block['end']:%H:%M}</td>"
                     f"<td class='n'>{block['sec'] / 60:.0f}分</td>"
-                    f"<td>{cell}{' / ' + _e(extra) if extra else ''}</td></tr>")
+                    f"<td>{cell}{' / ' + _e(extra) if extra else ''}</td>"
+                    f"<td class='muted'>{where}</td></tr>")
     unlabeled = sum(1 for b in blocks if not b.get("label"))
     # 「未ラベル 0本」は書かない。片付いている状態を、片付いていない状態と
     # 同じ字数で報告すると、残っている日に目が留まらなくなる。
     note = (f"<p class='sub'>{len(blocks)}本"
             + (f" / 未ラベル {unlabeled}本（<code>chronofit label</code> で付ける）"
                if unlabeled else "") + "</p>")
-    return (note + "<table><tr><th>時刻</th><th>長さ</th><th>ラベル</th></tr>"
+    return (note + "<table><tr><th>時刻</th><th>長さ</th><th>ラベル</th><th>場所</th></tr>"
             + "".join(rows) + "</table>")
 
 
