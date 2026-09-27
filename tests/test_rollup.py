@@ -133,6 +133,12 @@ def test_束ね方が変わって開始がずれてもブロックの中のラ�
     assert summary["away_blocks"][0]["label"] == "シャワー"
 
 
+def test_時刻として読めないラベルがあっても止まらない():
+    records = [span(_at(9, 0), _at(9, 20), 1200, 0.0)]
+    summary = rollup.merge_labels(rollup.summarize_day(records), {"not-a-time": "x"})
+    assert summary["away_blocks"][0]["label"] is None
+
+
 def test_ラベルの無いブロックはNoneのまま():
     records = [span(_at(9, 0), _at(9, 15), 900, 900),
                gap(_at(9, 15), _at(10, 0), 2700),
@@ -219,6 +225,8 @@ def test_離席の途中の一瞬の入力では離席を割らない():
     assert len(blocks) == 1
     assert blocks[0]["start"].isoformat(timespec="seconds") == _at(21, 55)
     assert blocks[0]["end"].isoformat(timespec="seconds") == _at(22, 18)
+    # 挟まった60秒は入力ありの時間なので、離席の長さには数えない
+    assert blocks[0]["sec"] == pytest.approx(1320)
 
 
 def test_1分を超える入力は離席を割る():

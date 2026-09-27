@@ -142,7 +142,9 @@ def away_blocks(segments, min_sec=MIN_AWAY_SEC):
     def flush():
         if not run:
             return
-        total = sum(s["sec"] for s in run)
+        # 挟まった入力はブロックの端から端には含めるが、離席の長さには数えない
+        # （その秒は wall/net に既に入っており、away_sec とも食い違わせない）
+        total = sum(s["sec"] for s in run if s["kind"] == "away")
         if total >= min_sec:
             # 理由は「一番長く占めたもの」を代表にする
             weights = {}
@@ -249,6 +251,13 @@ def summarize_day(records, min_away_sec=MIN_AWAY_SEC):
     }
 
 
+def _parse(moment):
+    try:
+        return datetime.fromisoformat(moment)
+    except (TypeError, ValueError):
+        return None
+
+
 def merge_labels(summary, labels):
     """既存のラベル（開始時刻 -> ラベル）を離席ブロックへ差し込む。
 
@@ -261,7 +270,7 @@ def merge_labels(summary, labels):
             # 束ね方を変えるとブロックの開始が前へずれる。付けた時点の開始が
             # 今のブロックの中にあれば、同じ離席に付けたラベルとみなす
             entry = next((value for start, value in sorted(labels.items())
-                          if block["start"] < datetime.fromisoformat(start) < block["end"]),
+                          if block["start"] < (_parse(start) or block["start"]) < block["end"]),
                          None)
         block["label"] = entry.get("label") if isinstance(entry, dict) else entry
         block["detail"] = entry if isinstance(entry, dict) else None

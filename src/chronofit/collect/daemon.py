@@ -144,7 +144,8 @@ def _should_close(span, key, moment, idle):
     return (key != span.key
             or span.started.date() != moment.date()
             or span.seconds() >= MAX_SPAN_SEC
-            or _is_active(idle) != span.active)
+            # アイドルを読めなかったサンプルでは切らない（一過性の失敗で割らない）
+            or (idle is not None and _is_active(idle) != span.active))
 
 
 def _acquire_lock():

@@ -28,6 +28,11 @@ def test_入力の有無が同じならスパンを続ける():
     assert not daemon._should_close(span, KEY, moment, idle=105.0)
 
 
+def test_アイドルを読めなかったサンプルでは切らない():
+    span, moment = _span(idle=1.0)
+    assert not daemon._should_close(span, KEY, moment, idle=None)
+
+
 def test_前景が変わったらスパンを切る():
     span, moment = _span(idle=1.0)
     assert daemon._should_close(span, ("vivaldi.exe", "x"), moment, idle=1.0)
