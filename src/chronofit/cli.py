@@ -31,7 +31,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_outing, cli_prs, config, paths, report_extras
+from . import cli_claude, cli_outing, cli_prs, config, paths, report_extras
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -788,6 +788,14 @@ def record_prs():
         print(f"PR の実績を記録できなかった: {error}", file=sys.stderr)
 
 
+def record_claude_time():
+    """会話ログが消える前に、Claude との会話の時間を日ごとに畳んで残す。"""
+    try:
+        cli_claude.record()
+    except (OSError, ValueError) as error:
+        print(f"会話の時間を畳めなかった: {error}", file=sys.stderr)
+
+
 def cmd_daily(args):
     """人手ゼロで回す1日の締め。前日を畳んで、進捗を写して残す。
 
@@ -799,6 +807,7 @@ def cmd_daily(args):
     cli_outing.fetch_if_authorized()
     sync_issues(quiet=True)
     record_prs()
+    record_claude_time()
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,
@@ -951,6 +960,7 @@ def build_parser():
     loc.set_defaults(func=cmd_location)
     cli_outing.register(sub)
     cli_prs.register(sub)
+    cli_claude.register(sub)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
     est.add_argument("subject", help="科目")

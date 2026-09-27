@@ -116,6 +116,10 @@ python -m chronofit done 応用数学B 過去問 --offpc        # 紙でやっ�
 python -m chronofit prs record    # マージした PR の作業時間を会話ログから（daily が毎晩自動で走らせる）
 python -m chronofit prs backtest  # PR の実績を1件ずつ抜いて、見積もりの当たり具合を測る
 
+# Claude との会話に使った時間の配分
+python -m chronofit claude --days 30   # プロジェクトごとの時間・割合・待ち/対話・種別（レポート等）
+python -m chronofit claude record      # 日ごとに畳んで残す（daily が毎晩自動で走らせる）
+
 # 予定を立てるとき
 python -m chronofit estimate 応用数学B 過去問   # (科目, 種別, 何本目) の見積もり
 python -m chronofit slack                       # 日タイプごとの slack 率
@@ -208,6 +212,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `tasks.json` | やることの一覧（Issue から写したものと手で書いたもの） | Issue 由来は `task sync` で戻る。手で書いたものは戻らない |
 | `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
 | `instances.jsonl` | 所要時間DB（終わったタスクの実測。`done` で入れたものと、マージした PR から自動で入れたもの） | `done` のぶんはできる。PR のぶんは会話ログが消えた後は戻らない |
+| `claude/<date>.json` | Claude との会話の時間をプロジェクト × 種別に畳んだもの。題は入らない | 会話ログが消えた後は戻らない |
 | `config.json` | 個人設定（科目名・分類ルール・容量・場所の座標） | 手で書いたもの |
 
 `report` が生タイトルを載せるのは、**自分が見るための面**だから。共有できる粒度は
