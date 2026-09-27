@@ -46,6 +46,12 @@ def test_外貨の利用は通貨ごと読む():
     assert row["amount"] == 110.28 and row["currency"] == "USD"
 
 
+def test_コロンの前の空白と秒のある通知も読む():
+    text = "◇利用日 ：2026/07/25 11:06:50\n◇利用先 ：テスト店\n◇利用金額：4000円\n"
+    assert payments.parse_card_notice(text) == {
+        "time": "2026-07-25T11:06:50+09:00", "merchant": "テスト店", "amount": 4000.0,
+        "currency": "JPY"}
+
 def test_モバイルオーダーのHTMLから注文時刻と店舗を読む():
     text = payments.html_to_text(ORDER_HTML)
     assert "color" not in text
