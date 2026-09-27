@@ -9,6 +9,9 @@
 - **在席は「前景が何か」ではなく「入力があったか」で数える。** active_sec は
   アイドルがしきい値未満だったサンプル数から出す。PDF を開いたまま離席した分は
   sec には乗るが active_sec には乗らない。
+- **入力の有無が切り替わったらスパンを切る。** 前景が同じでも、入力のある時間と
+  無い時間を1本に混ぜると、後段はスパン単位でしか在席か離席かを決められない。
+  5分のうち1回触れただけで5分まるごと在席になり、離席が割れて短くなる。
 - **ただし入力の無い在席が全部「離席」ではない。** 動画・講義映像を観ている間は手が
   動かない。前景プロセスが実際に音を鳴らしていたサンプルを media_sec として別に数え、
   「手は止まっているが観ていた時間」を離席から切り離す（判定は collect/audio.py）。
@@ -82,6 +85,10 @@ def _sample():
     return (process, title), title, idle, _media_playing(process)
 
 
+def _is_active(idle):
+    return idle is not None and idle < ACTIVE_IDLE_SEC
+
+
 class _Span:
     """畳み中のスパン。書き出す直前まで JSON にしない。"""
 
@@ -95,12 +102,15 @@ class _Span:
         self.active_samples = 0
         self.media_samples = 0
         self.last_idle = None
+        self.active = None   # 最初のサンプルで決まる。以後これと違うサンプルが来たら切る
 
     def add(self, idle, moment, media=False):
         self.ended = moment
         self.samples += 1
         self.last_idle = idle
-        if idle is not None and idle < ACTIVE_IDLE_SEC:
+        if self.active is None:
+            self.active = _is_active(idle)
+        if _is_active(idle):
             self.active_samples += 1
         if media:
             self.media_samples += 1
@@ -127,6 +137,14 @@ class _Span:
             "title": self.title,
             "idle_end": None if self.last_idle is None else round(self.last_idle, 1),
         }
+
+
+def _should_close(span, key, moment, idle):
+    """いま畳み中のスパンを書き出して、新しいスパンを始めるべきか。"""
+    return (key != span.key
+            or span.started.date() != moment.date()
+            or span.seconds() >= MAX_SPAN_SEC
+            or _is_active(idle) != span.active)
 
 
 def _acquire_lock():
@@ -219,9 +237,7 @@ def run(interval=INTERVAL_SEC, verbose=False, duration=None):
                     print(f"  sample 失敗（継続）: {error}")
                 continue
 
-            rotated = span is not None and span.started.date() != moment.date()
-            too_long = span is not None and span.seconds() >= MAX_SPAN_SEC
-            if span is not None and (key != span.key or rotated or too_long):
+            if span is not None and _should_close(span, key, moment, idle):
                 _append(span.to_record(), span.started)
                 span = None
 
@@ -230,7 +246,7 @@ def run(interval=INTERVAL_SEC, verbose=False, duration=None):
             span.add(idle, moment, media)
 
             if verbose:
-                mark = "*" if idle is not None and idle < ACTIVE_IDLE_SEC else (
+                mark = "*" if _is_active(idle) else (
                     "~" if media else " ")
                 print(f"  [{moment:%H:%M:%S}]{mark} {key[0]:24.24} {title[:56]}")
     except KeyboardInterrupt:

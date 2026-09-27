@@ -19,6 +19,7 @@ import json
 from datetime import datetime, timedelta
 
 MIN_AWAY_SEC = 900.0        # これ以上の離席だけラベルを聞く（15分）
+BRIDGE_SEC = 60.0           # 離席に挟まれたこれ以下の入力は、触れただけとみなして離席を割らない
 HOLE_TOLERANCE_SEC = 120.0  # これ以下の記録の隙間はサンプリングの揺らぎとみなす
 MEDIA_SHARE = 0.5           # 無入力スパンのうち音が出ていた割合がこれ以上なら「観ていた」
 MIN_PASSIVE_SEC = 300.0     # これ未満の再生は通知音等の可能性があるので数えない（5分）
@@ -131,9 +132,12 @@ def away_blocks(segments, min_sec=MIN_AWAY_SEC):
 
     束ねるのは、15分の離席が「ロック → スリープ → 復帰直後の無入力」のように
     複数セグメントへ割れることがあり、1つずつ聞くと質問数が跳ね上がるため。
+    離席と離席に挟まれた BRIDGE_SEC 以下の入力（通りがかりにマウスへ触れた等）も
+    同じ理由で束ねる。これで割ると、シャワー1回が15分未満の2本になって聞かれない。
     """
     blocks = []
     run = []
+    bridge = []   # 離席のあとに来た短い入力。次に離席が来たら run へ入れる
 
     def flush():
         if not run:
@@ -142,7 +146,7 @@ def away_blocks(segments, min_sec=MIN_AWAY_SEC):
         if total >= min_sec:
             # 理由は「一番長く占めたもの」を代表にする
             weights = {}
-            for segment in run:
+            for segment in (s for s in run if s["kind"] == "away"):
                 weights[segment["reason"]] = weights.get(segment["reason"], 0.0) + segment["sec"]
             reason = max(weights, key=weights.get)
             blocks.append({
@@ -154,8 +158,14 @@ def away_blocks(segments, min_sec=MIN_AWAY_SEC):
 
     for segment in segments:
         if segment["kind"] == "away":
+            run.extend(bridge)
+            bridge.clear()
             run.append(segment)
+        elif run and segment["kind"] == "present" and (
+                sum(s["sec"] for s in bridge) + segment["sec"] <= BRIDGE_SEC):
+            bridge.append(segment)
         else:
+            bridge.clear()
             flush()
     flush()
     return blocks
@@ -247,6 +257,12 @@ def merge_labels(summary, labels):
     """
     for block in summary["away_blocks"]:
         entry = labels.get(block["start"].isoformat(timespec="seconds"))
+        if entry is None:
+            # 束ね方を変えるとブロックの開始が前へずれる。付けた時点の開始が
+            # 今のブロックの中にあれば、同じ離席に付けたラベルとみなす
+            entry = next((value for start, value in sorted(labels.items())
+                          if block["start"] < datetime.fromisoformat(start) < block["end"]),
+                         None)
         block["label"] = entry.get("label") if isinstance(entry, dict) else entry
         block["detail"] = entry if isinstance(entry, dict) else None
     return summary
