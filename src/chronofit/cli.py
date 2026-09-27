@@ -8,6 +8,7 @@
     python -m chronofit report               1日の測定結果を HTML にして開く
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
     python -m chronofit location import F    スマホの位置履歴を取り込み、離席を場所で割る
+    python -m chronofit location serve       スマホ（OwnTracks）から位置を受け取る（常駐）
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
@@ -32,7 +33,7 @@ from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
 from .model import rollup
-from .sources import browser, clockify, history, location
+from .sources import browser, clockify, history, location, owntracks
 from .ui import ask, report
 
 
@@ -186,8 +187,11 @@ def _load_summary(date):
     # 場所は位置履歴を取り込んだ日にだけ付く。無ければ従来どおり長さとラベルだけ。
     # 期限切れの座標は読む前に消す。取り込みが止まっても、読むたびに期限が守られる。
     settings = config.load()
-    location.purge(paths.location_dir(), datetime.now().date(), _retention(settings))
-    stays = location.stays_around(date, paths.location_dir(), settings.get("places"))
+    root = paths.location_dir()
+    location.purge(root, datetime.now().date(), _retention(settings))
+    places = settings.get("places")
+    stays = location.merge_sources(location.stays_around(date, root, places),
+                                   owntracks.stays_for(date, root, places))
     return location.annotate(summary, stays)
 
 
@@ -260,21 +264,90 @@ def cmd_label(args):
 
 
 def _retention(settings):
-    """未登録座標の保持日数。0 は「残さない」の意味なので既定値へ戻さない。"""
+    """座標の保持日数。未設定なら消さない。0 は「残さない」の意味なので既定へ戻さない。"""
     value = settings.get("location_retention_days")
+    if value is None:
+        return None
     try:
         return max(0, int(value))
     except (TypeError, ValueError):
-        return location.RETENTION_DAYS
+        return None
+
+
+def _receiver_path():
+    return paths.location_dir() / "receiver.json"
+
+
+def _load_receiver():
+    try:
+        return json.loads(_receiver_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _all_stays(root, places):
+    """取り込み済みの書き出しと受信した点の両方から、全期間の滞在を集める。"""
+    imported = []
+    for day in location.stored_days(root):
+        imported += location.load_day(day, root)
+    # 点は全期間まとめて畳む。日ごとに畳むと、数日続いた滞在が日の境目で切れる。
+    received = location.to_stays(owntracks.to_segments(owntracks.all_points(root)), None)
+    return location.rematch(location.merge_sources(imported, received), places)
+
+
+def _location_setup(args):
+    """受け口の宛先と認証を決めて、スマホ側に入れる設定を表示する。"""
+    receiver = _load_receiver() or {}
+    receiver.update({"host": args.host or receiver.get("host"),
+                     "port": args.port or receiver.get("port") or 8765,
+                     "user": receiver.get("user") or "chronofit"})
+    if not receiver["host"]:
+        print("待ち受けるアドレスを --host で渡す（Tailscale の IP: tailscale ip -4）",
+              file=sys.stderr)
+        return 1
+    if args.rotate or not receiver.get("token"):
+        import secrets
+        receiver["token"] = secrets.token_urlsafe(24)
+    paths.ensure(paths.location_dir())
+    _receiver_path().write_text(json.dumps(receiver, indent=2) + "\n", encoding="utf-8")
+    print(f"-> {_receiver_path()}")
+    print("OwnTracks の設定（Preferences → Connection）:")
+    print("  Mode      HTTP")
+    print(f"  URL       http://{receiver['host']}:{receiver['port']}/pub")
+    print(f"  Username  {receiver['user']}")
+    print(f"  Password  {receiver['token']}")
+    return 0
+
+
+def _location_serve(args):
+    receiver = _load_receiver()
+    if not receiver or not receiver.get("host") or not receiver.get("token"):
+        print("先に `chronofit location setup --host <Tailscale IP>` を実行する", file=sys.stderr)
+        return 1
+    root = paths.ensure(paths.location_dir())
+    log_path = root / "receiver.log"
+
+    def log(message):
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now().isoformat(timespec='seconds')} {message}\n")
+
+    log(f"listen {receiver['host']}:{receiver['port']}")
+    owntracks.serve(receiver["host"], int(receiver["port"]), root,
+                    receiver["user"], receiver["token"], log)
+    return 0
 
 
 def cmd_location(args):
-    """位置履歴を取り込む / 未登録の場所を見る。"""
+    """位置履歴を取り込む / 受け取る / 未登録の場所を見る。"""
+    if args.action == "setup":
+        return _location_setup(args)
+    if args.action == "serve":
+        return _location_serve(args)
     settings = config.load()
     root = paths.location_dir()
     retention = _retention(settings)
     if args.action == "spots":
-        spots = location.unknown_spots(root)
+        spots = location.unknown_spots(_all_stays(root, settings.get("places")))
         if not spots:
             print("未登録の場所は無い。")
         for spot in spots[:args.limit]:
@@ -284,7 +357,8 @@ def cmd_location(args):
 
     source = Path(args.file)
     try:
-        data = json.loads(source.read_text(encoding="utf-8"))
+        text = source.read_text(encoding="utf-8")
+        data = json.loads(text)
     except (OSError, json.JSONDecodeError) as error:
         print(f"読めなかった: {error}", file=sys.stderr)
         return 1
@@ -295,14 +369,17 @@ def cmd_location(args):
     purged = location.purge(root, datetime.now().date(), retention)
     print(f"{len(stays)}件の滞在を {len(days)}日分に畳んだ -> {root}")
     if purged:
-        print(f"保持期間（{retention}日）を過ぎた未登録座標を {purged}件消した")
-    if args.delete_source and not stays:
-        print("滞在を1件も読めなかったので、書き出しファイルは消さずに残す")
-    elif args.delete_source:
+        print(f"保持期間（{retention}日）を過ぎた座標を {purged}件消した")
+    if not stays:
+        print("滞在を1件も読めなかったので、書き出しファイルはそのまま残す")
+        return 0
+    # 書き出しの原本は git の外へ写して残す。畳み方を変えたときに作り直せるように。
+    archive = paths.ensure(root / "exports") / f"{datetime.now():%Y%m%d-%H%M%S}.json"
+    archive.write_text(text, encoding="utf-8")
+    print(f"原本を残した -> {archive}")
+    if args.delete_source:
         source.unlink()
         print(f"書き出しファイルを消した: {source}")
-    else:
-        print("書き出しファイルは生の位置履歴なので、不要なら消す（--delete-source）")
     return 0
 
 
@@ -814,6 +891,11 @@ def build_parser():
                             help="取り込み後に書き出しファイルを消す")
     loc_spots = loc_sub.add_parser("spots", help="未登録の場所を滞在時間の長い順に見る")
     loc_spots.add_argument("--limit", type=int, default=15)
+    loc_setup = loc_sub.add_parser("setup", help="スマホからの受け口の宛先と認証を決める")
+    loc_setup.add_argument("--host", help="待ち受けるアドレス（Tailscale の IP）")
+    loc_setup.add_argument("--port", type=int, help="待ち受けるポート（既定 8765）")
+    loc_setup.add_argument("--rotate", action="store_true", help="パスワードを作り直す")
+    loc_sub.add_parser("serve", help="スマホ（OwnTracks）から位置を受け取る（常駐）")
     loc.set_defaults(func=cmd_location)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")

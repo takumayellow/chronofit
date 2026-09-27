@@ -3,8 +3,8 @@
 座標はすべて架空（赤道・本初子午線付近の海上）。実在の住所や店の座標を
 公開リポジトリへ入れないため、テストでも使わない。
 
-確かめるのは、場所の割り当てが正しいことに加えて、**保存物から個人情報が
-削られていること**（軌跡を持たない・登録済みの座標を持たない・期限で消える）。
+確かめるのは、場所の割り当てが正しいことと、**git の外の保存物には予測に使える
+情報が残ること**（座標・placeId・移動手段）、そして期限を設定すれば座標が消えること。
 """
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -75,21 +75,21 @@ def test_Z付きの時刻も読む():
     assert location.segments(data)[0][0] == at(12)
 
 
-def test_登録済みの場所は名前だけ残し座標を持たない():
+def test_登録済みの場所も座標を残す():
     stays = location.to_stays([(at(12), at(13), (0.0002, 0.0001))], PLACES)
-    assert stays == [{"start": at(12).isoformat(), "end": at(13).isoformat(), "place": "家"}]
+    assert stays == [{"start": at(12).isoformat(), "end": at(13).isoformat(), "place": "家",
+                      "lat": 0.0002, "lng": 0.0001}]
 
 
-def test_未登録の場所は丸めた座標だけ残す():
-    stays = location.to_stays([(at(12), at(13), (0.123456, 0.654321))], PLACES)
-    assert stays[0]["place"] == location.UNKNOWN
-    assert (stays[0]["lat"], stays[0]["lng"]) == (0.123, 0.654)
-
-
-def test_移動区間は区分と時刻だけ():
-    stays = location.to_stays([(at(12), at(12, 20), None)], PLACES)
-    assert stays == [{"start": at(12).isoformat(), "end": at(12, 20).isoformat(),
-                      "place": location.MOVING}]
+def test_書き出しのplaceIdと種別と移動手段を残す():
+    data = export({**visit(at(12), at(13), "0.0°, 0.0°")},
+                  activity(at(13), at(13, 10)))
+    data["semanticSegments"][0]["visit"]["topCandidate"].update(
+        {"placeId": "ChIJfake", "semanticType": "HOME"})
+    stays = location.to_stays(location.segments(data), PLACES)
+    assert (stays[0]["placeId"], stays[0]["semanticType"]) == ("ChIJfake", "HOME")
+    assert stays[1] == {"start": at(13).isoformat(), "end": at(13, 10).isoformat(),
+                        "place": location.MOVING, "mode": "WALKING"}
 
 
 def test_半径が重なるときは近いほうに当てる():
@@ -155,10 +155,14 @@ def test_後から登録した場所へ当て直す(tmp_path):
     later = PLACES + [{"name": "新しい店", "lat": 0.3, "lng": 0.3}]
     rematched = location.stays_around("2026-09-27", tmp_path, later)
     assert rematched[0]["place"] == "新しい店"
-    assert "lat" not in rematched[0]
 
 
-def test_保持期間を過ぎた未登録座標を消す(tmp_path):
+def test_場所の登録を外すと未登録に戻る(tmp_path):
+    location.store(location.to_stays([(at(12), at(13), (0.0, 0.0))], PLACES), tmp_path)
+    assert location.stays_around("2026-09-27", tmp_path, [SHOP])[0]["place"] == location.UNKNOWN
+
+
+def test_保持期間を設定すると過ぎた日の座標を消す(tmp_path):
     old = location.to_stays([(at(12, day=1), at(13, day=1), (0.3, 0.3))], PLACES)
     new = location.to_stays([(at(12), at(13), (0.3, 0.3))], PLACES)
     location.store(old + new, tmp_path)
@@ -167,24 +171,22 @@ def test_保持期間を過ぎた未登録座標を消す(tmp_path):
     kept_old = location.load_day("2026-09-01", tmp_path)[0]
     assert "lat" not in kept_old and kept_old["place"] == location.UNKNOWN
     assert "lat" in location.load_day("2026-09-27", tmp_path)[0]
+    assert location.purge(tmp_path, date(2026, 9, 27), retention_days=None) == 0
 
 
-def test_保存物に軌跡も登録済みの座標も入らない(tmp_path):
+def test_軌跡は滞在に二重に数えない(tmp_path):
     raw = location.segments(export(visit(at(12), at(13), "0.0°, 0.0°"),
                                    path_only(at(13), at(13, 5)),
                                    activity(at(13), at(13, 5))))
     location.store(location.to_stays(raw, PLACES), tmp_path)
-    text = (tmp_path / "2026-09-27.json").read_text(encoding="utf-8")
-    assert "timelinePath" not in text and "point" not in text
-    assert "lat" not in json.loads(text)[0]
+    assert len(location.load_day("2026-09-27", tmp_path)) == 2
 
 
 def test_未登録の場所を長い順に並べる(tmp_path):
     stays = location.to_stays([(at(9), at(10), (0.3, 0.3)),
                                (at(11), at(14), (0.5, 0.5)),
                                (at(15), at(16), (0.3, 0.3))], PLACES)
-    location.store(stays, tmp_path)
-    spots = location.unknown_spots(tmp_path)
+    spots = location.unknown_spots(stays)
     assert [(s["lat"], s["sec"], s["visits"]) for s in spots] == [(0.5, 10800.0, 1),
                                                                   (0.3, 7200.0, 2)]
 
@@ -201,6 +203,8 @@ def test_取り込みコマンドは書き出しを消せる(tmp_path, monkeypat
     assert not source.exists()
     stored = location.load_day("2026-09-27", tmp_path / "home" / "location")
     assert stored[0]["place"] == "家"
+    # 原本は git の外へ写して残る（畳み方を変えたら作り直せる）
+    assert len(list((tmp_path / "home" / "location" / "exports").glob("*.json"))) == 1
 
 
 def test_読めない書き出しは消さない(tmp_path, monkeypatch):
@@ -213,11 +217,11 @@ def test_読めない書き出しは消さない(tmp_path, monkeypatch):
     assert source.exists()
 
 
-def test_保持日数0は既定値へ戻さない():
+def test_保持日数は未設定なら消さず0は残さない():
     from chronofit import cli
     assert cli._retention({"location_retention_days": 0}) == 0
-    assert cli._retention({}) == location.RETENTION_DAYS
-    assert cli._retention({"location_retention_days": "x"}) == location.RETENTION_DAYS
+    assert cli._retention({}) is None
+    assert cli._retention({"location_retention_days": "x"}) is None
 
 
 def test_数日続いた滞在も当日の離席に重ねる(tmp_path):

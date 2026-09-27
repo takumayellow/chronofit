@@ -5,13 +5,14 @@ L0 は離席の**長さ**を秒で持っているが、その間どこにいた�
 位置履歴で離席ブロックを場所ごとに割る。**長さは L0、場所は位置履歴**と役割を分け、
 位置は L0 を置き換えない（位置だけでは PC の前にいたかは分からない）。
 
-位置履歴はウィンドウタイトルよりさらに機微なので、取り込んだ瞬間に削る:
+位置履歴はウィンドウタイトルよりさらに機微なので、置き場所は git の外
+（`paths.location_dir()`）に限る。その内側では予測に使えるよう削らずに持つ:
 
-- 軌跡（`timelinePath`）は読まない。移動区間は「移動」という区分と時刻だけ残す
-- 登録済みの場所は**名前だけ**残す。座標は残さない
-- 未登録の場所は座標を小数3桁（約100m）に丸めて持ち、場所を登録する手掛かりにする。
-  それも保持期間を過ぎたら消す（`purge`）
-- 置き場所は git の外（`paths.location_dir()`）。書き出しファイル自体はコピーしない
+- 滞在は座標と、書き出しにあれば `placeId`・`semanticType` も残す。場所を後から
+  登録し直しても、過去の滞在へ当て直せる（`rematch`）
+- 移動区間は「移動」という区分と時刻、書き出しにあれば移動手段を残す
+- 公開リポジトリへ出るのは場所の名前と秒だけ（ロールアップ）。座標は出さない
+- 期限で座標を消したい場合は `location_retention_days` を設定する（既定は消さない）
 """
 import json
 import math
@@ -19,8 +20,7 @@ from datetime import date as date_type, datetime, timedelta
 
 EARTH_RADIUS_M = 6371000.0
 DEFAULT_RADIUS_M = 100.0
-COORD_DIGITS = 3            # 小数3桁 ≈ 緯度方向 110m。店は特定できても部屋は特定できない粒度
-RETENTION_DAYS = 30         # 未登録座標を持っておく日数
+COORD_DIGITS = 6            # 測位の精度より細かくは持たない
 LOOKBACK_DAYS = 7           # これより前に始まった滞在は、当日の離席に重ねない
 DOMINANT_SHARE = 0.8        # ブロックのこれ以上を1か所で過ごしたら、その場所のラベルを提案する
 MOVING = "移動"
@@ -63,10 +63,10 @@ def parse_latlng(value):
 
 
 def segments(data):
-    """タイムライン書き出しから (開始, 終了, 座標 or None) を取り出す。
+    """タイムライン書き出しから (開始, 終了, 座標 or None, 付帯情報) を取り出す。
 
-    座標が None の区間は移動。軌跡だけの区間（`timelinePath`）は読み飛ばす —
-    滞在と移動の区間で時刻は埋まっており、軌跡は経路という余計な情報しか足さない。
+    座標が None の区間は移動。軌跡だけの区間（`timelinePath`）は時刻が滞在・移動の
+    区間と重なるので区間にはしない（生の書き出しは `raw/` に残る）。
     """
     items = data.get("semanticSegments") if isinstance(data, dict) else data
     result = []
@@ -80,9 +80,13 @@ def segments(data):
             candidate = item["visit"].get("topCandidate") or {}
             coords = parse_latlng(candidate.get("placeLocation"))
             if coords is not None:
-                result.append((start, end, coords))
+                meta = {key: candidate[key] for key in ("placeId", "semanticType")
+                        if isinstance(candidate.get(key), str)}
+                result.append((start, end, coords, meta))
         elif isinstance(item.get("activity"), dict):
-            result.append((start, end, None))
+            candidate = item["activity"].get("topCandidate") or {}
+            mode = candidate.get("type")
+            result.append((start, end, None, {"mode": mode} if isinstance(mode, str) else {}))
     return sorted(result, key=lambda segment: segment[0])
 
 
@@ -120,34 +124,32 @@ def match(coords, places):
 
 
 def to_stays(raw_segments, places):
-    """区間を保存用の滞在へ。ここで座標を落とす（未登録だけ丸めて残す）。"""
+    """区間を保存用の滞在へ。区間は (開始, 終了, 座標 or None[, 付帯情報])。"""
     places = valid_places(places)
     stays = []
-    for start, end, coords in raw_segments:
+    for segment in raw_segments:
+        start, end, coords = segment[:3]
         stay = {"start": start.isoformat(timespec="seconds"),
                 "end": end.isoformat(timespec="seconds")}
         if coords is None:
             stay["place"] = MOVING
         else:
-            name = match(coords, places)
-            stay["place"] = name or UNKNOWN
-            if name is None:
-                stay["lat"] = round(coords[0], COORD_DIGITS)
-                stay["lng"] = round(coords[1], COORD_DIGITS)
+            stay["place"] = match(coords, places) or UNKNOWN
+            stay["lat"] = round(coords[0], COORD_DIGITS)
+            stay["lng"] = round(coords[1], COORD_DIGITS)
+        if len(segment) > 3 and segment[3]:
+            stay.update(segment[3])
         stays.append(stay)
     return stays
 
 
 def rematch(stays, places):
-    """未登録の滞在を、後から登録した場所へ当て直す。座標を持つ間だけ効く。"""
+    """座標を持つ滞在を、今の場所の登録へ当て直す。登録の追加・移動が過去にも効く。"""
     places = valid_places(places)
     result = []
     for stay in stays:
-        if stay.get("place") == UNKNOWN and "lat" in stay and "lng" in stay:
-            name = match((stay["lat"], stay["lng"]), places)
-            if name:
-                stay = {key: value for key, value in stay.items() if key not in ("lat", "lng")}
-                stay["place"] = name
+        if stay.get("place") != MOVING and "lat" in stay and "lng" in stay:
+            stay = {**stay, "place": match((stay["lat"], stay["lng"]), places) or UNKNOWN}
         result.append(stay)
     return result
 
@@ -196,12 +198,12 @@ def store(stays, root):
     return sorted(by_day)
 
 
-def purge(root, today, retention_days=RETENTION_DAYS):
-    """保持期間を過ぎた日の未登録座標を消す。滞在の時刻と区分は残す。
+def purge(root, today, retention_days=None):
+    """保持期間を過ぎた日の座標を消す。滞在の時刻と区分は残す。None なら何もしない。
 
     返り値は座標を消した滞在の数。
     """
-    if not root.is_dir():
+    if retention_days is None or not root.is_dir():
         return 0
     cutoff = (today - timedelta(days=retention_days)).isoformat()
     removed = 0
@@ -230,7 +232,7 @@ def stays_around(day, root, places=None, lookback_days=LOOKBACK_DAYS):
         earlier = (current - timedelta(days=back)).isoformat()
         stays += [stay for stay in load_day(earlier, root)
                   if back == 0 or _parse_time(stay["end"]).astimezone().date() >= current]
-    return rematch(stays, places) if places else stays
+    return stays if places is None else rematch(stays, places)
 
 
 def overlay(block, stays):
@@ -275,25 +277,55 @@ def suggest(block, places):
     return None
 
 
-def unknown_spots(root, since=None):
-    """未登録の場所を丸めた座標ごとに合計する。場所を登録するときの手掛かり。"""
-    spots = {}
+def stored_days(root, since=None):
+    """取り込み済みの日付（YYYY-MM-DD）の列。"""
+    days = []
     for path in sorted(root.glob("*.json")) if root.is_dir() else []:
-        if since and path.stem < since:
+        try:
+            date_type.fromisoformat(path.stem)
+        except ValueError:
             continue
-        for stay in load_day(path.stem, root):
-            if "lat" not in stay or "lng" not in stay:
-                continue
-            seconds = (_parse_time(stay["end"]) - _parse_time(stay["start"])).total_seconds()
-            spot = spots.setdefault((stay["lat"], stay["lng"]),
-                                    {"lat": stay["lat"], "lng": stay["lng"],
-                                     "sec": 0.0, "visits": 0, "last": path.stem})
-            spot["sec"] += seconds
-            spot["visits"] += 1
-            spot["last"] = max(spot["last"], path.stem)
+        if not since or path.stem >= since:
+            days.append(path.stem)
+    return days
+
+
+def unknown_spots(stays):
+    """未登録の滞在を約100m 単位で束ねて合計する。場所を登録するときの手掛かり。"""
+    spots = {}
+    for stay in stays:
+        if stay.get("place") != UNKNOWN or "lat" not in stay or "lng" not in stay:
+            continue
+        seconds = (_parse_time(stay["end"]) - _parse_time(stay["start"])).total_seconds()
+        day = day_of(stay)
+        key = (round(stay["lat"], 3), round(stay["lng"], 3))
+        spot = spots.setdefault(key, {"lat": key[0], "lng": key[1],
+                                      "sec": 0.0, "visits": 0, "last": day})
+        spot["sec"] += seconds
+        spot["visits"] += 1
+        spot["last"] = max(spot["last"], day)
     return sorted(spots.values(), key=lambda spot: -spot["sec"])
 
 
 def format_parts(parts):
     """内訳を1行に。例: 「移動 12分 / 未登録の場所 40分」。"""
     return " / ".join(f"{part['place']} {part['sec'] / 60:.0f}分" for part in parts)
+
+
+def merge_sources(primary, secondary):
+    """2つの位置源の滞在を1列に。重なる時間は primary（タイムラインの書き出し）を取る。
+
+    同じ外出を両方が持っていると、離席ブロックの内訳が二重に数えられる。secondary は
+    primary と重なる部分だけ削り、覆われていない前後は残す。
+    """
+    spans = sorted((_parse_time(stay["start"]), _parse_time(stay["end"])) for stay in primary)
+    extra = []
+    for stay in secondary:
+        pieces = [(_parse_time(stay["start"]), _parse_time(stay["end"]))]
+        for cut_start, cut_end in spans:
+            pieces = [part for start, end in pieces
+                      for part in ((start, min(end, cut_start)), (max(start, cut_end), end))
+                      if part[1] > part[0]]
+        extra += [{**stay, "start": start.isoformat(timespec="seconds"),
+                   "end": end.isoformat(timespec="seconds")} for start, end in pieces]
+    return sorted(primary + extra, key=lambda stay: _parse_time(stay["start"]))

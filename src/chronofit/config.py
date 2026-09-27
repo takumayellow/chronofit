@@ -59,8 +59,8 @@ DEFAULTS = {
     # 例: {"name": "食堂", "lat": 0.01, "lng": 0.02, "radius_m": 80,
     #      "away_label": "食事・休憩"}
     "places": [],
-    # 未登録の場所の丸めた座標を持っておく日数。
-    "location_retention_days": 30,
+    # 滞在の座標を持っておく日数。None は消さない（予測に使うため既定は全部残す）。
+    "location_retention_days": None,
 }
 
 
