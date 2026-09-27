@@ -84,6 +84,14 @@ def location_dir():
     return data_root() / "location"
 
 
+def payments_dir():
+    """決済の記録（時刻・店名・金額）と、店名 → 用事の対応、メールを読むトークン。
+
+    買い物の履歴は位置履歴と同じくらい機微なので git の外に置く。メール本文は残さない。
+    """
+    return data_root() / "payments"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)

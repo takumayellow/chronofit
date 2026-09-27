@@ -11,6 +11,10 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = []
 
+[project.optional-dependencies]
+# 決済の通知メールを読むときだけ（`chronofit payments`）。他の機能は標準ライブラリだけで動く
+gmail = ["google-api-python-client", "google-auth", "google-auth-oauthlib"]
+
 [project.scripts]
 chronofit = "chronofit.cli:main"
 
