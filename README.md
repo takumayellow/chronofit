@@ -195,6 +195,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `payments/activities.json` | 店名 → 用事の対応 | 手で登録したもの |
 | `payments/sources.json` | 読む通知メールの送信元・件名・形式 | 手で登録したもの |
 | `payments/gmail-token.bin` | Gmail 読み取り専用のトークン（DPAPI で暗号化） | 同意し直せばできる |
+| `calendar/events.json` | カレンダーの予定の時刻・件名・場所欄（説明文や参加者は残さない） | 取り直せばできる |
+| `calendar/calendar-token.bin` | カレンダー読み取り専用のトークン（DPAPI で暗号化） | 同意し直せばできる |
 | `report/<date>.html` | 1日の分析画面。生タイトルを含む | できる |
 | `tasks.json` | やることの一覧 | 手で書いたもの |
 | `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
