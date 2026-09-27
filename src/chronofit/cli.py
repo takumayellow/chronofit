@@ -31,7 +31,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_outing, config, paths, report_extras
+from . import cli_outing, cli_prs, config, paths, report_extras
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -780,6 +780,14 @@ def cmd_board(args):
     return 0
 
 
+def record_prs():
+    """前日までにマージした PR の作業時間を DB へ足す。gh や会話ログが読めなくても締めは止めない。"""
+    try:
+        cli_prs.record(quiet=True)
+    except (RuntimeError, OSError, ValueError) as error:
+        print(f"PR の実績を記録できなかった: {error}", file=sys.stderr)
+
+
 def cmd_daily(args):
     """人手ゼロで回す1日の締め。前日を畳んで、進捗を写して残す。
 
@@ -790,6 +798,7 @@ def cmd_daily(args):
     failed = cmd_rollup(argparse.Namespace(date=date))
     cli_outing.fetch_if_authorized()
     sync_issues(quiet=True)
+    record_prs()
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,
@@ -941,6 +950,7 @@ def build_parser():
     cli_outing.register_place(loc_sub)
     loc.set_defaults(func=cmd_location)
     cli_outing.register(sub)
+    cli_prs.register(sub)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
     est.add_argument("subject", help="科目")

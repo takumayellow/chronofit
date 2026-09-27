@@ -109,3 +109,33 @@ def load(since, roots=None):
     """`since` 以降に動いた会話を読んで、作業名の索引を返す。"""
     files = transcript_files(roots if roots is not None else default_roots(), since)
     return index(read_session(path) for path in files)
+
+
+def archive_files(dirs, since):
+    """退避先（`<プロジェクト>/<会話>.jsonl` の並び）から、`since` 以降に動いた会話ログ。
+
+    退避先の更新時刻は時差ぶんずれることがあるので、1日余分に遡って拾う。
+    """
+    cutoff = since.timestamp() - 86400
+    result = []
+    for folder in dirs:
+        for path in Path(folder).glob("*/*.jsonl"):
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    result.append(path)
+            except OSError:
+                continue
+    return result
+
+
+def unique_sessions(paths):
+    """同じ会話（ファイル名が同じ）が手元と退避先の両方にあれば、大きいほうを残す。"""
+    best = {}
+    for path in paths:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if path.stem not in best or size > best[path.stem][0]:
+            best[path.stem] = (size, path)
+    return [path for _, path in best.values()]
