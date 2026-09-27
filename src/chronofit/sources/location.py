@@ -21,6 +21,7 @@ EARTH_RADIUS_M = 6371000.0
 DEFAULT_RADIUS_M = 100.0
 COORD_DIGITS = 3            # 小数3桁 ≈ 緯度方向 110m。店は特定できても部屋は特定できない粒度
 RETENTION_DAYS = 30         # 未登録座標を持っておく日数
+LOOKBACK_DAYS = 7           # これより前に始まった滞在は、当日の離席に重ねない
 DOMINANT_SHARE = 0.8        # ブロックのこれ以上を1か所で過ごしたら、その場所のラベルを提案する
 MOVING = "移動"
 UNKNOWN = "未登録の場所"
@@ -151,7 +152,7 @@ def rematch(stays, places):
     return result
 
 
-def _day_of(stay):
+def day_of(stay):
     return _parse_time(stay["start"]).astimezone().date().isoformat()
 
 
@@ -187,7 +188,7 @@ def store(stays, root):
     """
     by_day = {}
     for stay in stays:
-        by_day.setdefault(_day_of(stay), []).append(stay)
+        by_day.setdefault(day_of(stay), []).append(stay)
     for day, incoming in by_day.items():
         merged = {stay["start"]: stay for stay in load_day(day, root)}
         merged.update({stay["start"]: stay for stay in incoming})
@@ -205,6 +206,10 @@ def purge(root, today, retention_days=RETENTION_DAYS):
     cutoff = (today - timedelta(days=retention_days)).isoformat()
     removed = 0
     for path in sorted(root.glob("*.json")):
+        try:
+            date_type.fromisoformat(path.stem)
+        except ValueError:
+            continue            # 日付でない名前のファイルは chronofit のものではない
         if path.stem >= cutoff:
             continue
         stays = load_day(path.stem, root)
@@ -217,11 +222,14 @@ def purge(root, today, retention_days=RETENTION_DAYS):
     return removed
 
 
-def stays_around(day, root, places=None):
-    """その日の離席に重なりうる滞在。前日から続く滞在（夜通し寮にいた等）も拾う。"""
+def stays_around(day, root, places=None, lookback_days=LOOKBACK_DAYS):
+    """その日の離席に重なりうる滞在。前の日から続く滞在（数日家にいた等）も拾う。"""
     current = date_type.fromisoformat(day)
-    previous = (current - timedelta(days=1)).isoformat()
-    stays = load_day(previous, root) + load_day(day, root)
+    stays = []
+    for back in range(lookback_days, -1, -1):
+        earlier = (current - timedelta(days=back)).isoformat()
+        stays += [stay for stay in load_day(earlier, root)
+                  if back == 0 or _parse_time(stay["end"]).astimezone().date() >= current]
     return rematch(stays, places) if places else stays
 
 

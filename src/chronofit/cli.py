@@ -184,7 +184,10 @@ def _load_summary(date):
     summary = rollup.summarize_day(rollup.read_day(path))
     rollup.merge_labels(summary, labels_model.load(date, paths.label_dir()))
     # 場所は位置履歴を取り込んだ日にだけ付く。無ければ従来どおり長さとラベルだけ。
-    stays = location.stays_around(date, paths.location_dir(), config.load().get("places"))
+    # 期限切れの座標は読む前に消す。取り込みが止まっても、読むたびに期限が守られる。
+    settings = config.load()
+    location.purge(paths.location_dir(), datetime.now().date(), _retention(settings))
+    stays = location.stays_around(date, paths.location_dir(), settings.get("places"))
     return location.annotate(summary, stays)
 
 
@@ -256,11 +259,20 @@ def cmd_label(args):
     return 0
 
 
+def _retention(settings):
+    """未登録座標の保持日数。0 は「残さない」の意味なので既定値へ戻さない。"""
+    value = settings.get("location_retention_days")
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return location.RETENTION_DAYS
+
+
 def cmd_location(args):
     """位置履歴を取り込む / 未登録の場所を見る。"""
     settings = config.load()
     root = paths.location_dir()
-    retention = int(settings.get("location_retention_days") or location.RETENTION_DAYS)
+    retention = _retention(settings)
     if args.action == "spots":
         spots = location.unknown_spots(root)
         if not spots:
@@ -278,13 +290,15 @@ def cmd_location(args):
         return 1
     stays = location.to_stays(location.segments(data), settings.get("places"))
     if args.since:
-        stays = [stay for stay in stays if stay["start"][:10] >= args.since]
+        stays = [stay for stay in stays if location.day_of(stay) >= args.since]
     days = location.store(stays, root)
     purged = location.purge(root, datetime.now().date(), retention)
     print(f"{len(stays)}件の滞在を {len(days)}日分に畳んだ -> {root}")
     if purged:
         print(f"保持期間（{retention}日）を過ぎた未登録座標を {purged}件消した")
-    if args.delete_source:
+    if args.delete_source and not stays:
+        print("滞在を1件も読めなかったので、書き出しファイルは消さずに残す")
+    elif args.delete_source:
         source.unlink()
         print(f"書き出しファイルを消した: {source}")
     else:
@@ -660,8 +674,6 @@ def cmd_daily(args):
     """
     date = _resolve_date(args.date or "yesterday")
     failed = cmd_rollup(argparse.Namespace(date=date))
-    retention = int(config.load().get("location_retention_days") or location.RETENTION_DAYS)
-    location.purge(paths.location_dir(), datetime.now().date(), retention)
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,

@@ -45,9 +45,9 @@ def block(start, end):
 
 
 def test_座標表記はAndroidとiOSの両方を読む():
-    assert location.parse_latlng("35.5°, 139.5°") == (35.5, 139.5)
+    assert location.parse_latlng("1.5°, 2.5°") == (1.5, 2.5)
     assert location.parse_latlng({"latLng": "-1.25°, 2.5°"}) == (-1.25, 2.5)
-    assert location.parse_latlng("geo:35.5,139.5") == (35.5, 139.5)
+    assert location.parse_latlng("geo:1.5,2.5") == (1.5, 2.5)
     assert location.parse_latlng("geo:abc") is None
     assert location.parse_latlng("95.0°, 0.0°") is None
 
@@ -201,3 +201,32 @@ def test_取り込みコマンドは書き出しを消せる(tmp_path, monkeypat
     assert not source.exists()
     stored = location.load_day("2026-09-27", tmp_path / "home" / "location")
     assert stored[0]["place"] == "家"
+
+
+def test_読めない書き出しは消さない(tmp_path, monkeypatch):
+    from chronofit import cli
+    monkeypatch.setenv("CHRONOFIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHRONOFIT_CONFIG", str(tmp_path / "none.json"))
+    source = tmp_path / "wrong.json"
+    source.write_text(json.dumps({"unrelated": []}), encoding="utf-8")
+    assert cli.main(["location", "import", str(source), "--delete-source"]) == 0
+    assert source.exists()
+
+
+def test_保持日数0は既定値へ戻さない():
+    from chronofit import cli
+    assert cli._retention({"location_retention_days": 0}) == 0
+    assert cli._retention({}) == location.RETENTION_DAYS
+    assert cli._retention({"location_retention_days": "x"}) == location.RETENTION_DAYS
+
+
+def test_数日続いた滞在も当日の離席に重ねる(tmp_path):
+    location.store(location.to_stays([(at(22, day=24), at(8), (0.0, 0.0))], PLACES), tmp_path)
+    stays = location.stays_around("2026-09-27", tmp_path)
+    assert location.overlay(block(at(6), at(7)), stays) == [{"place": "家", "sec": 3600.0}]
+
+
+def test_日付でない名前のファイルはpurgeで触らない(tmp_path):
+    (tmp_path / "backup.json").write_text('[{"lat": 1}]', encoding="utf-8")
+    assert location.purge(tmp_path, date(2026, 9, 27), retention_days=0) == 0
+    assert "lat" in (tmp_path / "backup.json").read_text(encoding="utf-8")
