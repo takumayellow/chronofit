@@ -433,3 +433,16 @@ def register_place(loc_sub):
     place.add_argument("--radius", type=float, default=location.DEFAULT_RADIUS_M)
     place.add_argument("--label", help="この場所にいた離席に提案するラベル")
     place.add_argument("--home", action="store_true", help="家として扱う（外出の起点）")
+
+
+def agenda_for_day(day):
+    """その日の予定を (終わった予定と実際にいた場所, まだ終わっていない予定) に分ける。"""
+    events = [event for event in gcal.load(paths.calendar_dir())
+              if event["start"][:10] == day]
+    if not events:
+        return [], []
+    now = datetime.now().astimezone()
+    upcoming = [event for event in events
+                if datetime.fromisoformat(event["end"].replace("Z", "+00:00")) > now]
+    stays, places = _stays_and_places()
+    return agenda.check(events, stays, _homes(places), now=now), upcoming

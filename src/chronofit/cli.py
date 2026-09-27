@@ -31,7 +31,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_outing, config, paths
+from . import cli_outing, config, paths, report_extras
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -864,7 +864,8 @@ def cmd_report(args):
         ("その日に見えていた残量", paths.board_dir() / f"{date}.json"),
         ("所要時間DB（終わったタスクの実測）", estimate_db.default_path(paths.data_root())),
     ]
-    content = report.render(summary, date, rows, board_summary, sources, as_of)
+    extras = report_extras.gather(date, settings)
+    content = report.render(summary, date, rows, board_summary, sources, as_of, extras)
     destination = report.write(paths.ensure(paths.report_dir()) / f"{date}.html", content)
     print(f"-> {destination}")
     if not args.no_open:

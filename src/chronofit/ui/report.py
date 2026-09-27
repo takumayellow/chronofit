@@ -20,6 +20,8 @@
 import html as html_escape
 from datetime import timedelta
 
+from . import report_work
+
 # 色は「席にいたか」で系統を分ける。緑＝いた、灰＝いない、青＝観ていた。
 KIND_STYLE = {
     "present": ("#4c9a5c", "在席"),
@@ -147,6 +149,9 @@ td.t { word-break: break-all; }
 .warn { color: #a4471f; }
 .muted { color: #8a8378; }
 .paths { font-size: 12px; color: #6d675e; }
+ul.done, ul.tasks { margin: 0; padding-left: 18px; }
+ul.tasks { font-size: 12px; }
+.tag { display: inline-block; min-width: 4.5em; font-size: 11px; color: #6d675e; }
 .paths code { background: #f1eee8; padding: 1px 4px; border-radius: 3px; }
 @media (prefers-color-scheme: dark) {
   body { background: #171614; color: #e6e2db; }
@@ -296,16 +301,26 @@ def _paths_block(sources):
 
 
 def render(summary, date_label, board_rows=None, board_summary=None, sources=None,
-           as_of=None):
-    """1日ぶんの HTML を組み立てる。文字列を返すだけで、書き出しはしない。"""
+           as_of=None, extras=None):
+    """1日ぶんの HTML を組み立てる。文字列を返すだけで、書き出しはしない。
+
+    `extras` は `{"done": ..., "work": ..., "agenda": ...}`。上から「何が片付いたか →
+    どこで何をしたか → 予定どおりだったか → 何が残っているか」の順に読めるようにし、
+    時間の使い方の細部（流れ・離席・アプリ別）はその下に置く。
+    """
+    extras = extras or {}
     body = [
         f"<h1>{_e(date_label)}</h1>",
         "<p class='sub'>chronofit — 測った値だけを出す。推測した値は入っていない。</p>",
         f"<div class='cards'>{_cards(summary)}</div>",
+        "<h2>今日片付いたもの</h2>", report_work.done_section(extras.get("done")),
+        "<h2>どこで何をしたか</h2>",
+        report_work.work_section(extras.get("work"), summary.get("net_sec") or 0.0),
+        "<h2>予定と実際</h2>", report_work.agenda_section(extras.get("agenda")),
+        "<h2>残っているもの</h2>", _board_table(board_rows, board_summary, as_of),
         "<h2>1日の流れ</h2>", _timeline(summary),
         "<h2>離席</h2>", _away_table(summary),
-        "<h2>何に時間を使ったか</h2>", _title_table(summary),
-        "<h2>進捗</h2>", _board_table(board_rows, board_summary, as_of),
+        "<h2>アプリ・タイトル別</h2>", _title_table(summary),
         _paths_block(sources),
     ]
     return ("<!doctype html>\n<html lang='ja'><head><meta charset='utf-8'>"

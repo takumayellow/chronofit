@@ -210,6 +210,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 `report` が生タイトルを載せるのは、**自分が見るための面**だから。共有できる粒度は
 `rollup/` のほうで、そちらには意図的にタイトルを入れていない。
 
+`report` の上半分は「何が片付き、どこで何をし、予定どおりだったか」を出す。
+片付いたものは `gh search` で読むその日のマージ済み PR・閉じた Issue・コミット。
+作業の内訳は、ターミナルのタイトル（Claude が付けた作業名）を `~/.claude*/projects` の
+会話ログで引き、その時刻の作業ディレクトリからリポジトリを決める（会話の中身は読まない。
+置き場所は設定 `claude_dirs` で変えられる）。予定と実際は `calendar check` と同じ突き合わせ。
+
 このリポジトリには個人固有の定数（科目名・容量・分類ルール）を一切置かない。
 それらは利用側から設定として注入する。
 
