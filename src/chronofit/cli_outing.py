@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config, paths
-from .estimate import outing
-from .sources import location, owntracks, payments
+from .estimate import agenda, outing
+from .sources import gcal, location, owntracks, payments
 
 
 def all_stays(root, places):
@@ -29,8 +29,15 @@ def _stays_and_places():
 
 
 def _label(visit_list):
+    """滞在に用事を付ける。決済を先に使い、残りを繰り返しの予定で埋める。"""
     root = paths.payments_dir()
-    return payments.label_visits(visit_list, payments.load(root), payments.load_rules(root))
+    paid = payments.label_visits(visit_list, payments.load(root), payments.load_rules(root))
+    return agenda.label_visits(paid, gcal.load(paths.calendar_dir()))
+
+
+def spot_titles(stays):
+    """未登録の場所ごとに、そこにいた時間に重なった予定の件名（予定が無ければ空）。"""
+    return agenda.spot_titles(stays, gcal.load(paths.calendar_dir()))
 
 
 def _labeled_visits(stays):
@@ -166,13 +173,15 @@ def _payments_fetch(args):
 
 
 def fetch_if_authorized():
-    """日次の締めから呼ぶ。同意済みのときだけ新しい決済を足し、失敗しても締めは止めない。"""
+    """日次の締めから呼ぶ。同意済みのものだけ取り直し、失敗しても締めは止めない。"""
     from .sources import gmail
     root = paths.payments_dir()
-    if not (root / gmail.TOKEN_FILE).is_file():
-        return
-    print()
-    _payments_fetch(argparse.Namespace(since=_fetch_since(payments.load(root))))
+    if (root / gmail.TOKEN_FILE).is_file():
+        print()
+        _payments_fetch(argparse.Namespace(since=_fetch_since(payments.load(root))))
+    if (paths.calendar_dir() / gcal.TOKEN_FILE).is_file():
+        since = (datetime.now() - timedelta(days=CALENDAR_REFETCH_DAYS)).date().isoformat()
+        _calendar_fetch(argparse.Namespace(since=since))
 
 
 def _fetch_since(rows, overlap_days=3):
@@ -225,6 +234,135 @@ def cmd_payments(args):
     return 0
 
 
+CALENDAR_REFETCH_DAYS = 14     # 日次はこの日数ぶん遡って取り直す（後から直した予定を拾う）
+CALENDAR_DEFAULT_DAYS = 365
+
+
+def _calendar_fetch(args):
+    since_day = args.since or (datetime.now()
+                               - timedelta(days=CALENDAR_DEFAULT_DAYS)).date().isoformat()
+    if not _valid_date(since_day):
+        print("--since は YYYY-MM-DD", file=sys.stderr)
+        return 1
+    root = paths.ensure(paths.calendar_dir())
+    since, until = gcal.window(since_day)
+    try:
+        rows = gcal.fetch(root, since, until)
+    except RuntimeError as error:
+        print(f"予定を取得できなかった: {error}", file=sys.stderr)
+        return 1
+    except Exception as error:        # noqa: BLE001 - 日次の自動実行を止めない
+        status = getattr(error, "status_code", None)
+        hint = ("Google Cloud のプロジェクトで Calendar API が有効か確かめる" if status == 403
+                else "同意が切れていれば `chronofit calendar auth` をやり直す")
+        print(f"予定を取得できなかった: {type(error).__name__}"
+              f"{f' {status}' if status else ''}（{hint}）", file=sys.stderr)
+        return 1
+    gcal.save(root, gcal.replace_window(gcal.load(root), rows, since, until))
+    print(f"予定 {len(rows)}件（{since_day} 以降）-> {root / gcal.EVENTS}")
+    return 0
+
+
+def _fmt_clock(moment, day):
+    """時刻。予定の日と違う日なら日付も付ける（日をまたぐ滞在を読み違えない）。"""
+    if not moment:
+        return "  ?  "
+    moment = moment.astimezone(day.tzinfo)
+    return f"{moment:%H:%M}" if moment.date() == day.date() else f"{moment:%m/%d %H:%M}"
+
+
+def _calendar_check(args, events, stays, places):
+    now = datetime.now().astimezone()
+    rows = [row for row in agenda.check(events, stays, _homes(places), now=now)
+            if not args.since or row["event"]["start"][:10] >= args.since]
+    print("予定                              予定の時刻      実際（場所）")
+    for row in rows[-args.limit:]:
+        event = row["event"]
+        start, end = datetime.fromisoformat(event["start"]), datetime.fromisoformat(event["end"])
+        where = row["status"]
+        if row["status"] in ("外出", "未登録の場所", "家"):
+            where = (f"{_fmt_clock(row['actual_start'], start)}–"
+                     f"{_fmt_clock(row['actual_end'], start)} "
+                     f"{row['place']}")
+        print(f"  {start:%m/%d} {event['title'][:24]:24}  {start:%H:%M}–{end:%H:%M}  {where}")
+    counts = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    print("  内訳: " + " / ".join(f"{k} {v}件" for k, v in sorted(counts.items(),
+                                                                key=lambda kv: -kv[1])))
+    return 0
+
+
+def _current_home(visit_list, homes):
+    for visit in reversed(visit_list):
+        if visit["place"] in homes:
+            return visit["place"]
+    return next(iter(sorted(homes)), None)
+
+
+def _calendar_next(args, events, stays, places):
+    """先の予定のうち、場所が分かるものに「家を出る時刻」を付ける。"""
+    now = datetime.now().astimezone()
+    homes = _homes(places)
+    where = agenda.title_places(agenda.check(events, stays, homes, now=now))
+    origin = _current_home(outing.visits(stays), homes)
+    if not origin:
+        print("家が登録されていない。`chronofit location place 家 緯度 経度 --home`",
+              file=sys.stderr)
+        return 1
+    if not 1 <= args.days <= gcal.AHEAD_DAYS:
+        print(f"--days は 1〜{gcal.AHEAD_DAYS}（取得しているのはその先まで）", file=sys.stderr)
+        return 1
+    legs_by_pair = outing.leg_table(outing.legs(stays))
+    until = now + timedelta(days=args.days)
+    shown = 0
+    for event in events:
+        start = datetime.fromisoformat(event["start"])
+        if not now <= start < until:
+            continue
+        place = where.get(event["title"])
+        line = f"  {start:%m/%d %H:%M} {event['title'][:24]:24}"
+        if not place:
+            print(f"{line}  場所は未確定")
+            shown += 1
+            continue
+        found, basis = outing.leg_estimate(origin, place, legs_by_pair, places)
+        if place == origin or not found:
+            print(f"{line}  {place}（{origin}からの所要は{basis}）")
+        else:
+            leave = start - timedelta(minutes=found["median"])
+            safe = start - timedelta(minutes=found["p80"])
+            print(f"{line}  {place}  {origin}を {leave:%H:%M} に出る"
+                  f"（余裕を見て {safe:%H:%M}・{basis}）")
+        shown += 1
+    if not shown:
+        print("先の予定は無い。")
+    return 0
+
+
+def cmd_calendar(args):
+    """Google カレンダーの予定を位置の記録と突き合わせる（読み取り専用）。"""
+    if args.action == "auth":
+        from .sources import gmail
+        secret = Path(args.client_secret)
+        if not secret.is_file():
+            print(f"OAuth クライアントの JSON が無い: {secret}", file=sys.stderr)
+            return 1
+        root = paths.ensure(paths.calendar_dir())
+        gmail.authorize(root, secret, scopes=gcal.SCOPES, name=gcal.TOKEN_FILE)
+        print(f"同意を受け取った。トークンは暗号化して保存 -> {root}")
+        return 0
+    if args.action == "fetch":
+        return _calendar_fetch(args)
+    events = gcal.load(paths.calendar_dir())
+    if not events:
+        print("予定が無い。先に `chronofit calendar fetch`", file=sys.stderr)
+        return 1
+    stays, places = _stays_and_places()
+    handler = _calendar_check if args.action == "check" else _calendar_next
+    return handler(args, events, stays, places)
+
+
 def cmd_place(args):
     """場所を git の外の places.json へ登録する。"""
     place = {"name": args.name, "lat": args.lat, "lng": args.lng, "radius_m": args.radius}
@@ -271,6 +409,20 @@ def register(sub):
         cmd = pay_sub.add_parser(name, help=text)
         cmd.add_argument("--limit", type=int, default=30)
     pay.set_defaults(func=cmd_payments)
+
+    cal = sub.add_parser("calendar", help="カレンダーの予定を位置の記録と突き合わせる")
+    cal_sub = cal.add_subparsers(dest="action", required=True)
+    cal_auth = cal_sub.add_parser("auth", help="カレンダーの読み取り専用の権限に1回だけ同意する")
+    cal_auth.add_argument("--client-secret", required=True,
+                          help="OAuth クライアント（デスクトップ）の JSON")
+    cal_fetch = cal_sub.add_parser("fetch", help="予定を取り直す（git の外に保存）")
+    cal_fetch.add_argument("--since", help="この日付（YYYY-MM-DD）以降。既定は1年前")
+    cal_check = cal_sub.add_parser("check", help="過去の予定の時間に実際どこにいたか")
+    cal_check.add_argument("--since", help="この日付（YYYY-MM-DD）以降の予定だけ")
+    cal_check.add_argument("--limit", type=int, default=40)
+    cal_next = cal_sub.add_parser("next", help="先の予定の場所と、家を出る時刻の目安")
+    cal_next.add_argument("--days", type=int, default=7)
+    cal.set_defaults(func=cmd_calendar)
 
 
 def register_place(loc_sub):

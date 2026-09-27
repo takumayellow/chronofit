@@ -13,6 +13,8 @@
     python -m chronofit trip plan 家 A@食事 家  外出を区間と滞在の実測で見積もる
     python -m chronofit trip backtest        過去の外出で見積もりの誤差を測る
     python -m chronofit payments fetch       決済の通知メールから用事の材料を足す
+    python -m chronofit calendar check       予定の時間に実際どこにいたか
+    python -m chronofit calendar next        先の予定の場所と、家を出る時刻の目安
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
@@ -348,12 +350,16 @@ def cmd_location(args):
     root = paths.location_dir()
     retention = _retention(settings)
     if args.action == "spots":
-        spots = location.unknown_spots(cli_outing.all_stays(root, _places(settings)))
+        stays = cli_outing.all_stays(root, _places(settings))
+        spots = location.unknown_spots(stays)
+        titles = cli_outing.spot_titles(stays)
         if not spots:
             print("未登録の場所は無い。")
         for spot in spots[:args.limit]:
+            hint = titles.get((spot["lat"], spot["lng"]))
+            hint = ("  予定: " + ", ".join(t for t, _ in hint.most_common(3))) if hint else ""
             print(f"  {spot['lat']:.3f}, {spot['lng']:.3f}  {spot['sec'] / 3600:5.1f}h "
-                  f"{spot['visits']}回  最終 {spot['last']}")
+                  f"{spot['visits']}回  最終 {spot['last']}{hint}")
         return 0
 
     source = Path(args.file)

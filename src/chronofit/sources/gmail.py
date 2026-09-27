@@ -38,42 +38,47 @@ def _dpapi(data, protect):
         kernel32.LocalFree(blob_out.pbData)
 
 
-def save_token(root, credentials_json):
+def save_token(root, credentials_json, name=TOKEN_FILE):
     root.mkdir(parents=True, exist_ok=True)
-    (root / TOKEN_FILE).write_bytes(_dpapi(credentials_json.encode("utf-8"), True))
+    (root / name).write_bytes(_dpapi(credentials_json.encode("utf-8"), True))
 
 
-def load_token(root):
-    path = root / TOKEN_FILE
+def load_token(root, name=TOKEN_FILE):
+    path = root / name
     if not path.is_file():
         return None
     return _dpapi(path.read_bytes(), False).decode("utf-8")
 
 
-def authorize(root, client_secret):
+def authorize(root, client_secret, scopes=SCOPES, name=TOKEN_FILE):
     """ブラウザで1回だけ同意してもらい、更新トークンを保存する。"""
     from google_auth_oauthlib.flow import InstalledAppFlow
-    flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), scopes)
     credentials = flow.run_local_server(port=0, open_browser=True,
                                         authorization_prompt_message="",
                                         success_message="chronofit: 同意を受け取った。"
                                                         "このタブは閉じてよい。")
-    save_token(root, credentials.to_json())
+    save_token(root, credentials.to_json(), name)
     return True
 
 
-def _service(root):
+def build_service(root, api, version, scopes, name, hint):
+    """保存したトークンで API の窓口を作る。期限切れなら更新して保存し直す。"""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
-    stored = load_token(root)
+    stored = load_token(root, name)
     if not stored:
-        raise RuntimeError("先に `chronofit payments auth` で同意する")
-    credentials = Credentials.from_authorized_user_info(json.loads(stored), SCOPES)
+        raise RuntimeError(f"先に `{hint}` で同意する")
+    credentials = Credentials.from_authorized_user_info(json.loads(stored), scopes)
     if not credentials.valid:
         credentials.refresh(Request())
-        save_token(root, credentials.to_json())
-    return build("gmail", "v1", credentials=credentials, cache_discovery=False)
+        save_token(root, credentials.to_json(), name)
+    return build(api, version, credentials=credentials, cache_discovery=False)
+
+
+def _service(root):
+    return build_service(root, "gmail", "v1", SCOPES, TOKEN_FILE, "chronofit payments auth")
 
 
 def _decode(data):

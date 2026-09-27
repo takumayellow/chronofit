@@ -92,6 +92,14 @@ def payments_dir():
     return data_root() / "payments"
 
 
+def calendar_dir():
+    """Google カレンダーの予定（時刻・件名・場所欄）と、読み取り専用のトークン。
+
+    予定の件名は私生活そのものなので git の外に置く。
+    """
+    return data_root() / "calendar"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)
