@@ -139,3 +139,14 @@ def test_GitHubの検索は現地時刻の1日で切る():
     tz = timezone(timedelta(hours=9))
     assert github_done.day_range(date(2026, 1, 5), tz) == (
         "2026-01-05T00:00:00+09:00..2026-01-05T23:59:59+09:00")
+
+
+def test_これからの予定に出る時刻と終わる時刻の目安を出す():
+    event = {"title": "散髪", "start": "2026-09-29T15:00:00+09:00",
+             "end": "2026-09-29T16:00:00+09:00"}
+    guess = {"place": "店", "n": 3, "arrive": -8, "leave": -11, "done": 72}
+    html = report_work.agenda_section({"checked": [], "upcoming": [
+        {"event": event, "forecast": guess}, {"event": {**event, "title": "ゼミ"},
+                                              "forecast": None}]})
+    assert "これから 店・14:49 ごろ出る・16:12 ごろ終わる（過去3回）" in html
+    assert "<td class='muted'>これから</td>" in html

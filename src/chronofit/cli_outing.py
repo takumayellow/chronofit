@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config, paths
-from .estimate import agenda, outing
+from .estimate import agenda, auto_places, outing
 from .sources import gcal, location, owntracks, payments
 
 
@@ -23,9 +23,23 @@ def all_stays(root, places):
 
 
 def _stays_and_places():
+    """全期間の滞在と場所の登録。繰り返し行った未登録の場所は、ここで自動登録し直す。"""
     root = paths.location_dir()
-    places = location.load_places(root, config.load().get("places"))
-    return all_stays(root, places), places
+    manual = location.load_places(root, config.load().get("places"), auto=False)
+    stays = all_stays(root, manual)
+    events = gcal.load(paths.calendar_dir())
+    if events:
+        guessed = location.valid_places(auto_places.discover(stays, events, manual))
+        try:
+            location.save_auto_places(root, guessed)
+        except OSError:               # 書けなくても今回の結果には使う
+            pass
+    else:                             # 予定が読めないときは作り直さず、前回の登録を使う
+        names = {place["name"] for place in manual}
+        guessed = [place for place in location.load_places(root, auto=True)
+                   if place.get("auto") and place["name"] not in names]
+    places = manual + guessed
+    return location.rematch(stays, places), places
 
 
 def _label(visit_list):
@@ -304,7 +318,8 @@ def _calendar_next(args, events, stays, places):
     """先の予定のうち、場所が分かるものに「家を出る時刻」を付ける。"""
     now = datetime.now().astimezone()
     homes = _homes(places)
-    where = agenda.title_places(agenda.check(events, stays, homes, now=now))
+    checked = agenda.check(events, stays, homes, now=now)
+    where = agenda.title_places(checked)
     origin = _current_home(outing.visits(stays), homes)
     if not origin:
         print("家が登録されていない。`chronofit location place 家 緯度 経度 --home`",
@@ -320,7 +335,7 @@ def _calendar_next(args, events, stays, places):
         start = datetime.fromisoformat(event["start"])
         if not now <= start < until:
             continue
-        place = where.get(event["title"])
+        place = where.get(event["title"]) or agenda.place_for(event["title"], checked)
         line = f"  {start:%m/%d %H:%M} {event['title'][:24]:24}"
         if not place:
             print(f"{line}  場所は未確定")
@@ -436,7 +451,7 @@ def register_place(loc_sub):
 
 
 def agenda_for_day(day):
-    """その日の予定を (終わった予定と実際にいた場所, まだ終わっていない予定) に分ける。"""
+    """その日の予定を (終わった予定と実際にいた場所, まだ終わっていない予定と見積もり) に分ける。"""
     events = [event for event in gcal.load(paths.calendar_dir())
               if event["start"][:10] == day]
     if not events:
@@ -445,7 +460,11 @@ def agenda_for_day(day):
     upcoming = [event for event in events
                 if datetime.fromisoformat(event["end"].replace("Z", "+00:00")) > now]
     stays, places = _stays_and_places()
-    return agenda.check(events, stays, _homes(places), now=now), upcoming
+    homes = _homes(places)
+    past = agenda.check(gcal.load(paths.calendar_dir()), stays, homes, now=now)
+    ahead = [{"event": event, "forecast": agenda.forecast(event, past, stays)}
+             for event in upcoming]
+    return agenda.check(events, stays, homes, now=now), ahead
 
 
 def refresh_calendar(day):

@@ -195,6 +195,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `location/points/<date>.jsonl` | スマホ（OwnTracks）から受け取った位置 | 取り逃すと戻らない |
 | `location/<date>.json` | タイムライン書き出しを畳んだ滞在（原本は `location/exports/`） | 書き出しがあればできる |
 | `location/places.json` | 登録した場所（名前・座標・半径・家かどうか） | 手で登録したもの |
+| `location/auto_places.json` | 繰り返し行った未登録の場所に、重なった予定の件名で付けた仮の名前 | できる（読むたびに作り直す） |
 | `payments/payments.jsonl` | 決済の時刻・店名・金額（通知メールの本文は残さない） | メールがあればできる |
 | `payments/activities.json` | 店名 → 用事の対応 | 手で登録したもの |
 | `payments/sources.json` | 読む通知メールの送信元・件名・形式 | 手で登録したもの |
