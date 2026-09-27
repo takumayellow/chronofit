@@ -1,4 +1,6 @@
 """Issue を一覧の正本にするときの変換のテスト。リポジトリ名・件名はすべて架空。"""
+import subprocess
+
 from chronofit.sources import todo_issues
 
 
@@ -41,3 +43,15 @@ def test_複数リポジトリのProjectでは件名にリポジトリ名を付�
     items = [item(5, "準備", []), item(5, "準備", [], repo="https://github.com/someone/other")]
     tasks = todo_issues.to_tasks(items, {"someone/todo": {5}, "someone/other": {5}})
     assert [task["target"] for task in tasks] == ["todo#5 準備", "other#5 準備"]
+
+
+def test_ghは窓を作らずに起動する(monkeypatch):
+    seen = {}
+
+    def run(args, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(todo_issues.subprocess, "run", run)
+    todo_issues.gh_json("project", "item-list")
+    assert seen.get("creationflags", 0) & todo_issues.NO_WINDOW == todo_issues.NO_WINDOW
