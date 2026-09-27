@@ -100,6 +100,15 @@ def calendar_dir():
     return data_root() / "calendar"
 
 
+def claude_time_dir():
+    """Claude との会話に使った時間を、日ごと・プロジェクトごとに畳んだもの。
+
+    会話ログは既定で 30 日で消えるので、消える前に畳んで残す。作業名（会話の題）から
+    振り分けた結果を持つので、ここも git の外に置く。
+    """
+    return data_root() / "claude"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)
