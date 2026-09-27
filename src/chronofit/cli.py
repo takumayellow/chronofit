@@ -9,6 +9,10 @@
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
     python -m chronofit location import F    スマホの位置履歴を取り込み、離席を場所で割る
     python -m chronofit location serve       スマホ（OwnTracks）から位置を受け取る（常駐）
+    python -m chronofit location place N LAT LNG  場所を登録（git 外の places.json）
+    python -m chronofit trip plan 家 A@食事 家  外出を区間と滞在の実測で見積もる
+    python -m chronofit trip backtest        過去の外出で見積もりの誤差を測る
+    python -m chronofit payments fetch       決済の通知メールから用事の材料を足す
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
@@ -24,7 +28,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, paths
+from . import cli_outing, config, paths
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -189,7 +193,7 @@ def _load_summary(date):
     settings = config.load()
     root = paths.location_dir()
     location.purge(root, datetime.now().date(), _retention(settings))
-    places = settings.get("places")
+    places = _places(settings)
     stays = location.merge_sources(location.stays_around(date, root, places),
                                    owntracks.stays_for(date, root, places))
     return location.annotate(summary, stays)
@@ -243,7 +247,7 @@ def cmd_label(args):
     pending = labels_model.unlabeled(summary)
     presets = config.study_presets(settings)
 
-    places = settings.get("places") or []
+    places = _places(settings)
     answers = ask.ask_blocks(
         pending,
         config.away_categories(settings),
@@ -274,6 +278,11 @@ def _retention(settings):
         return None
 
 
+def _places(settings):
+    """登録済みの場所。git の外の places.json を正とし、設定の places で補う。"""
+    return location.load_places(paths.location_dir(), settings.get("places"))
+
+
 def _receiver_path():
     return paths.location_dir() / "receiver.json"
 
@@ -283,16 +292,6 @@ def _load_receiver():
         return json.loads(_receiver_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-
-
-def _all_stays(root, places):
-    """取り込み済みの書き出しと受信した点の両方から、全期間の滞在を集める。"""
-    imported = []
-    for day in location.stored_days(root):
-        imported += location.load_day(day, root)
-    # 点は全期間まとめて畳む。日ごとに畳むと、数日続いた滞在が日の境目で切れる。
-    received = location.to_stays(owntracks.to_segments(owntracks.all_points(root)), None)
-    return location.rematch(location.merge_sources(imported, received), places)
 
 
 def _location_setup(args):
@@ -343,11 +342,13 @@ def cmd_location(args):
         return _location_setup(args)
     if args.action == "serve":
         return _location_serve(args)
+    if args.action == "place":
+        return cli_outing.cmd_place(args)
     settings = config.load()
     root = paths.location_dir()
     retention = _retention(settings)
     if args.action == "spots":
-        spots = location.unknown_spots(_all_stays(root, settings.get("places")))
+        spots = location.unknown_spots(cli_outing.all_stays(root, _places(settings)))
         if not spots:
             print("未登録の場所は無い。")
         for spot in spots[:args.limit]:
@@ -362,7 +363,7 @@ def cmd_location(args):
     except (OSError, json.JSONDecodeError) as error:
         print(f"読めなかった: {error}", file=sys.stderr)
         return 1
-    stays = location.to_stays(location.segments(data), settings.get("places"))
+    stays = location.to_stays(location.segments(data), _places(settings))
     if args.since:
         stays = [stay for stay in stays if location.day_of(stay) >= args.since]
     days = location.store(stays, root)
@@ -751,6 +752,7 @@ def cmd_daily(args):
     """
     date = _resolve_date(args.date or "yesterday")
     failed = cmd_rollup(argparse.Namespace(date=date))
+    cli_outing.fetch_if_authorized()
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,
@@ -896,7 +898,9 @@ def build_parser():
     loc_setup.add_argument("--port", type=int, help="待ち受けるポート（既定 8765）")
     loc_setup.add_argument("--rotate", action="store_true", help="パスワードを作り直す")
     loc_sub.add_parser("serve", help="スマホ（OwnTracks）から位置を受け取る（常駐）")
+    cli_outing.register_place(loc_sub)
     loc.set_defaults(func=cmd_location)
+    cli_outing.register(sub)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
     est.add_argument("subject", help="科目")

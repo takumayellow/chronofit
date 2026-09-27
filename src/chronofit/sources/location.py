@@ -25,6 +25,7 @@ LOOKBACK_DAYS = 7           # これより前に始まった滞在は、当日�
 DOMINANT_SHARE = 0.8        # ブロックのこれ以上を1か所で過ごしたら、その場所のラベルを提案する
 MOVING = "移動"
 UNKNOWN = "未登録の場所"
+PLACES_FILE = "places.json"
 
 
 def _parse_time(text):
@@ -111,6 +112,37 @@ def valid_places(places):
             continue
         result.append({**place, "lat": lat, "lng": lng, "radius_m": radius})
     return result
+
+
+def load_places(root, configured=None):
+    """場所の登録。git の外の `places.json` と設定の `places` を合わせる。
+
+    座標は個人の生活圏そのものなので、設定ファイル（利用側のリポジトリから配置される
+    ことがある）でなく位置履歴と同じ git の外に置くのを正とする。同じ名前があれば
+    `places.json` を取る。
+    """
+    stored = []
+    path = root / PLACES_FILE
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            loaded = []
+        stored = loaded if isinstance(loaded, list) else []
+    names = {place.get("name") for place in stored if isinstance(place, dict)}
+    extra = [place for place in configured or []
+             if isinstance(place, dict) and place.get("name") not in names]
+    return valid_places(stored + extra)
+
+
+def save_place(root, place):
+    """場所を1件 `places.json` へ足す。同じ名前は置き換える。"""
+    path = root / PLACES_FILE
+    current = [p for p in load_places(root) if p["name"] != place["name"]]
+    root.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(current + [place], ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+    return path
 
 
 def match(coords, places):

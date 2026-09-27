@@ -12,4 +12,9 @@ build/
 data/
 *.sqlite
 *.jsonl
+# 場所の座標・読む通知・店の対応・トークン（CHRONOFIT_HOME を作業ツリーに向けても入れない）
+places.json
+sources.json
+activities.json
+*.bin
 .env

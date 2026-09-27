@@ -190,6 +190,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `labels/<date>.json` | 離席に人が付けたラベル | **できない**（人しか知らない） |
 | `location/points/<date>.jsonl` | スマホ（OwnTracks）から受け取った位置 | 取り逃すと戻らない |
 | `location/<date>.json` | タイムライン書き出しを畳んだ滞在（原本は `location/exports/`） | 書き出しがあればできる |
+| `location/places.json` | 登録した場所（名前・座標・半径・家かどうか） | 手で登録したもの |
+| `payments/payments.jsonl` | 決済の時刻・店名・金額（通知メールの本文は残さない） | メールがあればできる |
+| `payments/activities.json` | 店名 → 用事の対応 | 手で登録したもの |
+| `payments/sources.json` | 読む通知メールの送信元・件名・形式 | 手で登録したもの |
+| `payments/gmail-token.bin` | Gmail 読み取り専用のトークン（DPAPI で暗号化） | 同意し直せばできる |
 | `report/<date>.html` | 1日の分析画面。生タイトルを含む | できる |
 | `tasks.json` | やることの一覧 | 手で書いたもの |
 | `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
