@@ -7,6 +7,7 @@
     python -m chronofit rollup               1日分を畳んで net/wall/離席に分ける
     python -m chronofit report               1日の測定結果を HTML にして開く
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
+    python -m chronofit location import F    スマホの位置履歴を取り込み、離席を場所で割る
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
@@ -31,7 +32,7 @@ from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
 from .model import rollup
-from .sources import browser, clockify, history
+from .sources import browser, clockify, history, location
 from .ui import ask, report
 
 
@@ -181,7 +182,10 @@ def _load_summary(date):
     if not path.is_file():
         return None
     summary = rollup.summarize_day(rollup.read_day(path))
-    return rollup.merge_labels(summary, labels_model.load(date, paths.label_dir()))
+    rollup.merge_labels(summary, labels_model.load(date, paths.label_dir()))
+    # 場所は位置履歴を取り込んだ日にだけ付く。無ければ従来どおり長さとラベルだけ。
+    stays = location.stays_around(date, paths.location_dir(), config.load().get("places"))
+    return location.annotate(summary, stays)
 
 
 def cmd_rollup(args):
@@ -204,7 +208,9 @@ def cmd_rollup(args):
         "away_blocks": [{"start": b["start"].isoformat(timespec="seconds"),
                          "end": b["end"].isoformat(timespec="seconds"),
                          "sec": round(b["sec"], 1), "reason": b["reason"],
-                         "label": b.get("label")} for b in summary["away_blocks"]],
+                         "label": b.get("label"),
+                         # 場所は名前と秒だけ。座標はここへ出さない。
+                         "places": b.get("places")} for b in summary["away_blocks"]],
     }
     destination = paths.ensure(paths.rollup_dir()) / f"{date}.json"
     destination.write_text(json.dumps(shareable, ensure_ascii=False, indent=2) + "\n",
@@ -230,10 +236,13 @@ def cmd_label(args):
     pending = labels_model.unlabeled(summary)
     presets = config.study_presets(settings)
 
+    places = settings.get("places") or []
     answers = ask.ask_blocks(
         pending,
         config.away_categories(settings),
-        lambda block: labels_model.suggest(block, defaults, weekend),
+        # その日の実際の居場所は、同じ時間帯の過去の傾向より確か。
+        lambda block: (location.suggest(block, places)
+                       or labels_model.suggest(block, defaults, weekend)),
         detail_for=lambda block: ask.ask_detail(presets, block.get("guess")))
     if not answers:
         return 0
@@ -244,6 +253,42 @@ def cmd_label(args):
         stored[start] = labels_model.make_entry(by_start[start], label, detail)
     labels_model.save(date, paths.label_dir(), stored)
     print(f"\n{len(answers)}本を記録 -> {labels_model.path_for(date, paths.label_dir())}")
+    return 0
+
+
+def cmd_location(args):
+    """位置履歴を取り込む / 未登録の場所を見る。"""
+    settings = config.load()
+    root = paths.location_dir()
+    retention = int(settings.get("location_retention_days") or location.RETENTION_DAYS)
+    if args.action == "spots":
+        spots = location.unknown_spots(root)
+        if not spots:
+            print("未登録の場所は無い。")
+        for spot in spots[:args.limit]:
+            print(f"  {spot['lat']:.3f}, {spot['lng']:.3f}  {spot['sec'] / 3600:5.1f}h "
+                  f"{spot['visits']}回  最終 {spot['last']}")
+        return 0
+
+    source = Path(args.file)
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"読めなかった: {error}", file=sys.stderr)
+        return 1
+    stays = location.to_stays(location.segments(data), settings.get("places"))
+    if args.since:
+        stays = [stay for stay in stays if stay["start"][:10] >= args.since]
+    days = location.store(stays, root)
+    purged = location.purge(root, datetime.now().date(), retention)
+    print(f"{len(stays)}件の滞在を {len(days)}日分に畳んだ -> {root}")
+    if purged:
+        print(f"保持期間（{retention}日）を過ぎた未登録座標を {purged}件消した")
+    if args.delete_source:
+        source.unlink()
+        print(f"書き出しファイルを消した: {source}")
+    else:
+        print("書き出しファイルは生の位置履歴なので、不要なら消す（--delete-source）")
     return 0
 
 
@@ -615,6 +660,8 @@ def cmd_daily(args):
     """
     date = _resolve_date(args.date or "yesterday")
     failed = cmd_rollup(argparse.Namespace(date=date))
+    retention = int(config.load().get("location_retention_days") or location.RETENTION_DAYS)
+    location.purge(paths.location_dir(), datetime.now().date(), retention)
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,
@@ -745,6 +792,17 @@ def build_parser():
     label = sub.add_parser("label", help="離席ブロックにラベルを付ける")
     label.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は今日）")
     label.set_defaults(func=cmd_label)
+
+    loc = sub.add_parser("location", help="スマホの位置履歴で離席を場所ごとに割る")
+    loc_sub = loc.add_subparsers(dest="action", required=True)
+    loc_import = loc_sub.add_parser("import", help="タイムラインの書き出し JSON を取り込む")
+    loc_import.add_argument("file", help="書き出したタイムライン JSON")
+    loc_import.add_argument("--since", help="この日以降だけ取り込む YYYY-MM-DD")
+    loc_import.add_argument("--delete-source", action="store_true",
+                            help="取り込み後に書き出しファイルを消す")
+    loc_spots = loc_sub.add_parser("spots", help="未登録の場所を滞在時間の長い順に見る")
+    loc_spots.add_argument("--limit", type=int, default=15)
+    loc.set_defaults(func=cmd_location)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
     est.add_argument("subject", help="科目")

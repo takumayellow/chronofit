@@ -74,6 +74,16 @@ def report_dir():
     return data_root() / "report"
 
 
+def location_dir():
+    """スマホの位置履歴を畳んだ滞在。
+
+    ウィンドウタイトルよりさらに機微なので、ここも git の外に置き、
+    登録済みの場所は名前だけ、未登録は丸めた座標を保持期間のあいだだけ持つ
+    （`sources/location.py`）。
+    """
+    return data_root() / "location"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)
