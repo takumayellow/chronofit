@@ -124,6 +124,21 @@ def test_ラベルは開始時刻で突き合わせる():
     assert labeled["away_blocks"][0]["label"] == "昼食"
 
 
+def test_束ね方が変わって開始がずれてもブロックの中のラベルを使う():
+    # 以前は 22:01 始まりのブロックとして付けたラベルが、手前の離席と束ねられた後も残る
+    records = [span(_at(21, 55), _at(22, 0), 300, 0.0),
+               span(_at(22, 0), _at(22, 1), 60, 60),
+               span(_at(22, 1), _at(22, 18), 1020, 0.0)]
+    summary = rollup.merge_labels(rollup.summarize_day(records), {_at(22, 1): "シャワー"})
+    assert summary["away_blocks"][0]["label"] == "シャワー"
+
+
+def test_時刻として読めないラベルがあっても止まらない():
+    records = [span(_at(9, 0), _at(9, 20), 1200, 0.0)]
+    summary = rollup.merge_labels(rollup.summarize_day(records), {"not-a-time": "x"})
+    assert summary["away_blocks"][0]["label"] is None
+
+
 def test_ラベルの無いブロックはNoneのまま():
     records = [span(_at(9, 0), _at(9, 15), 900, 900),
                gap(_at(9, 15), _at(10, 0), 2700),
@@ -197,3 +212,34 @@ class TestRelativeDates:
         from chronofit.cli import _resolve_date
 
         assert _resolve_date("2026-01-02") == "2026-01-02"
+
+
+def test_離席の途中の一瞬の入力では離席を割らない():
+    # 離席中にマウスへ触れた程度の入力（60秒以下）は、前後の離席とひと続きにする
+    records = [span(_at(21, 40), _at(21, 55), 900, 900),
+               span(_at(21, 55), _at(22, 0), 300, 0.0),
+               span(_at(22, 0), _at(22, 1), 60, 60),
+               span(_at(22, 1), _at(22, 18), 1020, 0.0),
+               span(_at(22, 18), _at(22, 30), 720, 720)]
+    blocks = rollup.summarize_day(records)["away_blocks"]
+    assert len(blocks) == 1
+    assert blocks[0]["start"].isoformat(timespec="seconds") == _at(21, 55)
+    assert blocks[0]["end"].isoformat(timespec="seconds") == _at(22, 18)
+    # 挟まった60秒は入力ありの時間なので、離席の長さには数えない
+    assert blocks[0]["sec"] == pytest.approx(1320)
+
+
+def test_1分を超える入力は離席を割る():
+    records = [span(_at(9, 0), _at(9, 20), 1200, 0.0),
+               span(_at(9, 20), _at(9, 22), 120, 120),
+               span(_at(9, 22), _at(9, 42), 1200, 0.0)]
+    assert len(rollup.summarize_day(records)["away_blocks"]) == 2
+
+
+def test_離席の前後の短い入力は離席に含めない():
+    records = [span(_at(9, 0), _at(9, 1), 60, 60),
+               span(_at(9, 1), _at(9, 21), 1200, 0.0),
+               span(_at(9, 21), _at(9, 22), 60, 60)]
+    blocks = rollup.summarize_day(records)["away_blocks"]
+    assert [(b["start"].isoformat(timespec="seconds"), b["sec"]) for b in blocks] == [
+        (_at(9, 1), 1200)]
