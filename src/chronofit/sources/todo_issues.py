@@ -25,7 +25,7 @@ _PRIORITY = re.compile(r"(P[123])(?::|$)")
 _REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._][A-Za-z0-9._-]*")
 
 
-def _gh(*args):
+def gh_json(*args):
     try:
         done = subprocess.run(["gh", *args], capture_output=True, text=True,
                               encoding="utf-8", timeout=TIMEOUT, check=False)
@@ -40,12 +40,12 @@ def fetch(owner, number, limit=500):
     """Project の項目と、項目のあるリポジトリで開いている Issue 番号を読む。"""
     if not _OWNER.fullmatch(str(owner)) or not str(number).isdigit():
         raise ValueError("todo_project の owner / number の形が違う")
-    items = (_gh("project", "item-list", str(number), "--owner", owner,
+    items = (gh_json("project", "item-list", str(number), "--owner", owner,
                  "--format", "json", "--limit", str(limit)) or {}).get("items") or []
     repos = {repo for repo in map(_repo, items) if repo and _REPO.fullmatch(repo)}
     open_numbers = {}
     for repo in sorted(repos):
-        rows = _gh("issue", "list", "-R", repo, "--state", "open",
+        rows = gh_json("issue", "list", "-R", repo, "--state", "open",
                    "--json", "number", "--limit", str(limit)) or []
         open_numbers[repo] = {row["number"] for row in rows}
     return items, open_numbers

@@ -152,7 +152,7 @@ class Test離席と進捗:
                "days_left": None, "hours_per_day": None, "state": "未着手",
                "overdue": False}
         html = report.render(summary(), "2026-08-09", [row])
-        assert "0.0h" not in html.split("<h2>進捗</h2>")[1]
+        assert "0.0h" not in html.split("<h2>残っているもの</h2>")[1]
 
     def test_一覧が空でも進捗の欄は出る(self):
         assert "task add" in report.render(summary(), "2026-08-09", [])
