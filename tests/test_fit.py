@@ -143,3 +143,11 @@ def test_展開した本は開始日を持ち越す():
     items = fit.expand([{"subject": "応用数学B", "kind": "過去問", "count": 2,
                          "start": "2026-12-01", "due": "2026-12-20"}], INSTANCES, SETTINGS)
     assert {item["start"] for item in items} == {"2026-12-01"}
+
+
+def test_置ける週が1つも無ければ理由を分けて溢れさせる():
+    weeks = [{"week": "2026-08-10", "net": 10.0, "unknown_days": 0}]
+    items = [{"subject": "A", "kind": "過去問", "index": 1, "hours": 1.0,
+              "start": "2026-08-20", "due": "2026-08-12"}]
+    _, overflow = fit.allocate(items, weeks)
+    assert overflow[0]["reason"] == "開始から締切までに置ける週が無い"

@@ -703,6 +703,10 @@ def cmd_task(args):
             except ValueError:
                 print(f"日付は YYYY-MM-DD で書く: {flag} {value}", file=sys.stderr)
                 return 1
+        if args.start and args.due and args.start > args.due:
+            print(f"開始日が締切より後になっている: --start {args.start} --due {args.due}",
+                  file=sys.stderr)
+            return 1
         if args.count < 1:
             print("--count は1以上。やらないなら task rm で消す。", file=sys.stderr)
             return 1

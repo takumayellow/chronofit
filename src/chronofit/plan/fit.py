@@ -138,7 +138,12 @@ def allocate(items, weeks):
                 week["items"].append(item)
                 break
         else:
-            reason = "締切までの容量に入らない" if item.get("due") else "容量に入らない"
+            if not window:
+                reason = "開始から締切までに置ける週が無い"
+            elif item.get("due"):
+                reason = "締切までの容量に入らない"
+            else:
+                reason = "容量に入らない"
             overflow.append({**item, "reason": reason})
     return remaining, overflow
 
