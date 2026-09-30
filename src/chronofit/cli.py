@@ -695,18 +695,24 @@ def cmd_task(args):
     if args.action == "add":
         # 締切はここで弾く。読む側（board / daily）で落とすと、書き間違えた1行のせいで
         # 毎晩の自動実行が止まり、そのぶんの進捗が永久に残らなくなる。
-        if args.due:
+        for flag, value in (("--due", args.due), ("--start", args.start)):
+            if not value:
+                continue
             try:
-                datetime.strptime(args.due, "%Y-%m-%d")
+                datetime.strptime(value, "%Y-%m-%d")
             except ValueError:
-                print(f"締切は YYYY-MM-DD で書く: --due {args.due}", file=sys.stderr)
+                print(f"日付は YYYY-MM-DD で書く: {flag} {value}", file=sys.stderr)
                 return 1
+        if args.start and args.due and args.start > args.due:
+            print(f"開始日が締切より後になっている: --start {args.start} --due {args.due}",
+                  file=sys.stderr)
+            return 1
         if args.count < 1:
             print("--count は1以上。やらないなら task rm で消す。", file=sys.stderr)
             return 1
         entry = {"subject": args.subject, "kind": args.kind,
                  "count": args.count, "priority": args.priority}
-        for name in ("target", "due", "assumed_hours"):
+        for name in ("target", "start", "due", "assumed_hours"):
             if getattr(args, name, None) is not None:
                 entry[name] = getattr(args, name)
         tasks_store.save(path, tasks_store.upsert(current, entry))
@@ -1006,6 +1012,7 @@ def build_parser():
     task_cmd.add_argument("kind", nargs="?", help="種別（過去問 / 参考書 ...）")
     task_cmd.add_argument("--count", type=int, default=1, help="全部で何本やるか")
     task_cmd.add_argument("--due", help="締切 YYYY-MM-DD")
+    task_cmd.add_argument("--start", help="この日を含む週より前には置かない YYYY-MM-DD")
     task_cmd.add_argument("--priority", default="B", help="S / A / B / C")
     task_cmd.add_argument("--target", help="対象（2024年度期末 など）")
     task_cmd.add_argument("--assumed-hours", type=float,
