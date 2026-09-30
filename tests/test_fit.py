@@ -105,3 +105,41 @@ def test_通しで計画にすると需要と供給が並ぶ():
                     today=date(2026, 8, 10))
     assert plan["demand"] > 0 and plan["supply"] > 0
     assert len(plan["weeks"]) == 1
+
+
+def test_同じ科目と種別の2つ目のタスクは通し番号を続ける():
+    # 中間ぶんの過去問のあとに期末ぶんを置くとき、期末の1本目は通算で次の本
+    items = fit.expand([{"subject": "応用数学B", "kind": "過去問", "count": 2, "target": "中間"},
+                        {"subject": "応用数学B", "kind": "過去問", "count": 2, "target": "期末"}],
+                       INSTANCES, SETTINGS)
+    assert [item["index"] for item in items] == [5, 6, 7, 8]
+    assert [item["target"] for item in items] == ["中間", "中間", "期末", "期末"]
+
+
+def test_開始日より前の週には置かない():
+    # 期末の範囲は授業で習う前には解けない
+    weeks = [{"week": "2026-08-10", "net": 10.0, "unknown_days": 0},
+             {"week": "2026-08-17", "net": 10.0, "unknown_days": 0}]
+    items = [{"subject": "A", "kind": "過去問", "index": 1, "hours": 2.0,
+              "start": "2026-08-18", "due": "2026-08-30"}]
+    placed, overflow = fit.allocate(items, weeks)
+    assert placed[0]["items"] == [] and placed[1]["items"][0]["subject"] == "A"
+    assert overflow == []
+
+
+def test_締切の週を過ぎたら置かずに溢れさせる():
+    # 空いている後ろの週へ黙って置くと「間に合う」という嘘の計画になる
+    weeks = [{"week": "2026-08-10", "net": 2.0, "unknown_days": 0},
+             {"week": "2026-08-17", "net": 10.0, "unknown_days": 0}]
+    items = [{"subject": "A", "kind": "過去問", "index": 1, "hours": 2.0, "due": "2026-08-14"},
+             {"subject": "B", "kind": "過去問", "index": 1, "hours": 2.0, "due": "2026-08-14"}]
+    placed, overflow = fit.allocate(items, weeks)
+    assert [item["subject"] for item in placed[0]["items"]] == ["A"]
+    assert placed[1]["items"] == []
+    assert overflow[0]["subject"] == "B" and "締切" in overflow[0]["reason"]
+
+
+def test_展開した本は開始日を持ち越す():
+    items = fit.expand([{"subject": "応用数学B", "kind": "過去問", "count": 2,
+                         "start": "2026-12-01", "due": "2026-12-20"}], INSTANCES, SETTINGS)
+    assert {item["start"] for item in items} == {"2026-12-01"}

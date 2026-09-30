@@ -72,8 +72,10 @@ def expand(tasks, instances, settings=None):
 
     `count` を2以上にすると、通し番号を進めながら並べる。**ここが学習曲線の効くところ**で、
     「過去問5本」を平らな5倍として置かないためにこの展開がある。
+    同じ (科目, 種別) のタスクが続くとき（中間ぶん・期末ぶん）は、番号を通しで続ける。
     """
     items = []
+    following = {}
     for task in tasks:
         subject, kind = task.get("subject"), task.get("kind")
         if not subject or not kind:
@@ -81,9 +83,12 @@ def expand(tasks, instances, settings=None):
         mode = kinds.mode_for(kind, settings)
         if mode == kinds.HABIT:
             continue   # 習慣は需要ではない。容量から引く側
-        start = task.get("index") or curve.next_index(instances, subject, kind)
-        for offset in range(max(1, int(task.get("count") or 1))):
-            index = start + offset
+        first = (task.get("index") or following.get((subject, kind))
+                 or curve.next_index(instances, subject, kind))
+        count = max(1, int(task.get("count") or 1))
+        following[(subject, kind)] = first + count
+        for offset in range(count):
+            index = first + offset
             if mode == kinds.ONEOFF:
                 estimate = kinds.estimate_oneoff(instances, subject, kind,
                                                  task.get("assumed_hours"))
@@ -92,7 +97,7 @@ def expand(tasks, instances, settings=None):
                                           task.get("assumed_hours"))
             items.append({"subject": subject, "kind": kind, "mode": mode,
                           "target": task.get("target"), "index": index,
-                          "due": task.get("due"),
+                          "start": task.get("start"), "due": task.get("due"),
                           "hours": estimate.get("hours"),
                           "basis": estimate.get("basis"),
                           "note": estimate.get("note")})
@@ -104,11 +109,20 @@ def order(items):
     return sorted(items, key=lambda item: (item["due"] or "9999-99-99", item["index"]))
 
 
+def _within(week, item):
+    """その週（月曜の日付）が item の置ける範囲に入るか。"""
+    start, due = item.get("start"), item.get("due")
+    if start and week < week_key(date.fromisoformat(start)):
+        return False
+    return not due or week <= week_key(date.fromisoformat(due))
+
+
 def allocate(items, weeks):
     """週の容量へ順に詰める。入らなかったものは overflow で返す。
 
     1本を週にまたいで割らない。またいで割った計画は、実行時にどちらの週の分なのかが
-    分からなくなって守れない。
+    分からなくなって守れない。置けるのは `start` を含む週から `due` を含む週まで。
+    締切の週を過ぎた空きへは置かない（置くと「間に合う」という嘘になる）。
     """
     remaining = [{"week": week["week"], "left": week["net"], "items": []}
                  for week in weeks if week["net"] is not None]
@@ -117,13 +131,15 @@ def allocate(items, weeks):
         if item["hours"] is None:
             overflow.append({**item, "reason": "見積もりが出せない（実測も仮値も無い）"})
             continue
-        for week in remaining:
+        window = [week for week in remaining if _within(week["week"], item)]
+        for week in window:
             if item["hours"] <= week["left"]:
                 week["left"] -= item["hours"]
                 week["items"].append(item)
                 break
         else:
-            overflow.append({**item, "reason": "容量に入らない"})
+            reason = "締切までの容量に入らない" if item.get("due") else "容量に入らない"
+            overflow.append({**item, "reason": reason})
     return remaining, overflow
 
 
