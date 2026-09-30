@@ -15,6 +15,7 @@
     python -m chronofit payments fetch       決済の通知メールから用事の材料を足す
     python -m chronofit calendar check       予定の時間に実際どこにいたか
     python -m chronofit calendar next        先の予定の場所と、家を出る時刻の目安
+    python -m chronofit phone pull           スマホの使用状況を読む（睡眠・アプリ別の時間）
     python -m chronofit done S K T           終わったタスクを実測込みでDBへ入れる
     python -m chronofit estimate S K         (科目, 種別, 何本目) の見積もり
     python -m chronofit slack                日タイプごとの slack 率
@@ -31,7 +32,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_claude, cli_outing, cli_prs, config, paths, report_extras
+from . import cli_claude, cli_outing, cli_phone, cli_prs, config, paths, report_extras
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -39,6 +40,7 @@ from .plan import tasks as tasks_store
 from .estimate import db as estimate_db
 from .model import context as context_model
 from .model import labels as labels_model
+from .model import phone as phone_model
 from .model import rollup
 from .sources import browser, clockify, history, location, owntracks, todo_issues
 from .ui import ask, report
@@ -199,7 +201,9 @@ def _load_summary(date):
     places = _places(settings)
     stays = location.merge_sources(location.stays_around(date, root, places),
                                    owntracks.stays_for(date, root, places))
-    return location.annotate(summary, stays)
+    location.annotate(summary, stays)
+    # 睡眠とスマホはスマホのイベントがある日にだけ付く
+    return cli_phone.annotate_summary(summary, date, settings)
 
 
 def cmd_rollup(args):
@@ -211,6 +215,8 @@ def cmd_rollup(args):
         return 1
 
     print(rollup.format_summary(summary, date))
+    for line in phone_model.format_lines(summary):
+        print(line)
 
     # segments は生タイトルを含むので書き出さない。出すのは集計値だけ。
     shareable = {
@@ -224,13 +230,35 @@ def cmd_rollup(args):
                          "sec": round(b["sec"], 1), "reason": b["reason"],
                          "label": b.get("label"),
                          # 場所は名前と秒だけ。座標はここへ出さない。
-                         "places": b.get("places")} for b in summary["away_blocks"]],
+                         "places": b.get("places"),
+                         **_phone_fields(b, ("sleep_sec", "phone_sec"))}
+                        for b in summary["away_blocks"]],
+        # 睡眠とスマホは秒とカテゴリだけ。アプリ名はここへ出さない。
+        **_phone_fields(summary, ("sleep_sec", "away_awake_sec", "phone_sec",
+                                  "phone_away_sec", "phone_categories", "wake", "bed")),
     }
     destination = paths.ensure(paths.rollup_dir()) / f"{date}.json"
     destination.write_text(json.dumps(shareable, ensure_ascii=False, indent=2) + "\n",
                            encoding="utf-8")
     print(f"-> {destination}")
     return 0
+
+
+def _phone_fields(source, keys):
+    """スマホの記録がある日だけ、指定の項目を共有できる形で出す。"""
+    fields = {}
+    for key in keys:
+        if key not in source:
+            continue
+        value = source[key]
+        if isinstance(value, datetime):
+            value = value.isoformat(timespec="seconds")
+        elif isinstance(value, float):
+            value = round(value, 1)
+        elif isinstance(value, dict):
+            value = {name: round(sec, 1) for name, sec in value.items()}
+        fields[key] = value
+    return fields
 
 
 def cmd_label(args):
@@ -967,6 +995,7 @@ def build_parser():
     cli_outing.register(sub)
     cli_prs.register(sub)
     cli_claude.register(sub)
+    cli_phone.register(sub)
 
     est = sub.add_parser("estimate", help="(科目, 種別, 何本目) の見積もり")
     est.add_argument("subject", help="科目")

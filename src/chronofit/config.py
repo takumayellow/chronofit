@@ -61,6 +61,16 @@ DEFAULTS = {
     "places": [],
     # 滞在の座標を持っておく日数。None は消さない（予測に使うため既定は全部残す）。
     "location_retention_days": None,
+    # スマホの使用状況（`chronofit phone pull`）。
+    # `adb_serials`: 読みに行く端末。`host:port` なら先に `adb connect` する。
+    #   端末の IP は個人の環境なので、ここ（git の外）にだけ書く。
+    # `categories`: パッケージ名 -> カテゴリ。rollup にはカテゴリだけが出る。
+    #   例: {"com.example.chat": "連絡"}
+    # `sleep`: 睡眠の判定。夜の時間帯・最短の長さ等（既定は model/phone.py）。
+    #   例: {"window": ["20:00", "14:00"], "min_hours": 3.0}
+    # `retention_days`: イベントを持っておく日数。None は消さない。
+    "phone": {"adb": "adb", "adb_serials": [], "categories": {}, "sleep": {},
+              "retention_days": None},
 }
 
 
@@ -92,3 +102,9 @@ def study_presets(config=None):
     """オフPC作業のラベル2段目の選択肢。"""
     presets = (config or load()).get("study_presets") or []
     return [p for p in presets if p.get("key") and p.get("subject")]
+
+
+def phone(config=None):
+    """スマホの設定。部分的に書かれていても既定値で埋める。"""
+    given = (config or load()).get("phone") or {}
+    return {**DEFAULTS["phone"], **(given if isinstance(given, dict) else {})}

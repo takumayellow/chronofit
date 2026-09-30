@@ -109,6 +109,15 @@ def claude_time_dir():
     return data_root() / "claude"
 
 
+def phone_dir():
+    """スマホの使用状況（画面の点灯・解除・アプリの前面化の時刻とパッケージ名）。
+
+    どのアプリをいつ開いたかは生活そのものなので git の外に置く。中身は
+    日ごとのイベント（`events/`）、取得できた時刻（`pulls.jsonl`）、取得のログ。
+    """
+    return data_root() / "phone"
+
+
 def ensure(path):
     """ディレクトリを作って返す。"""
     path.mkdir(parents=True, exist_ok=True)
