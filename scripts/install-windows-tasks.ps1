@@ -18,6 +18,8 @@
     chronofit-refresh   今日の日次レポートを 30 分ごとに書き出し直す。位置はスマホから
                         常時届くので、予定と実際の突き合わせを翌朝まで待たせない
     chronofit-location  スマホから位置を受け取る常駐（`chronofit location setup` 済みのときだけ）
+    chronofit-phone     スマホの使用状況を 30 分ごとに無線 adb で読む。端末は直近24時間しか
+                        持たないので、PC が1日以上止まらなければ取りこぼさない
 
 .PARAMETER SnapshotTime
   スナップショットを走らせる時刻 (HH:mm)。既定 13:00。
@@ -127,6 +129,20 @@ Register-ScheduledTask -TaskName "$Prefix-refresh" -Force `
     -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit report --no-open') `
     -Trigger $every30 `
     -Settings $refreshSettings | Out-Null
+
+# --- スマホの使用状況 -------------------------------------------------------
+# 端末の usagestats は直近24時間の窓なので、30 分ごとに読めば多少取りこぼしても
+# 次の回で埋まる。端末が見つからない回は pull.log に失敗を残して終わるだけ。
+$phoneSettings = New-ScheduledTaskSettingsSet @common -MultipleInstances IgnoreNew
+$phoneSettings.ExecutionTimeLimit = 'PT5M'
+$phoneEvery30 = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(20) `
+    -RepetitionInterval (New-TimeSpan -Minutes 30)
+
+Register-ScheduledTask -TaskName "$Prefix-phone" -Force `
+    -Description 'chronofit: スマホの使用状況（画面・アプリの前面化）を 30 分ごとに読む' `
+    -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit phone pull') `
+    -Trigger $phoneEvery30 `
+    -Settings $phoneSettings | Out-Null
 
 # --- スマホからの位置の受け口 -----------------------------------------------
 # `chronofit location setup` を済ませたときだけ登録する。スマホ側のアプリは届かなかった

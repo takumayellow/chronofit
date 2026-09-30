@@ -126,6 +126,10 @@ python -m chronofit slack                       # 日タイプごとの slack �
 python -m chronofit capacity --days 30          # 暦 - 習慣の実測 = 割り当て可能な時間
 python -m chronofit task add 応用数学B 過去問 --count 5 --due 2026-09-14  # やることを一覧へ
 python -m chronofit task sync                     # 開いている Issue を一覧へ写す
+
+# スマホ（無線 adb の usagestats。定期実行は chronofit-phone）
+python -m chronofit phone pull    # 直近24時間のイベントを足す
+python -m chronofit phone apps    # アプリごとの前面時間（カテゴリ対応表を書くため。画面にだけ出す）
 python -m chronofit board                       # いまどこまで来ているか
 python -m chronofit plan --until 2026-09-14     # 残りを週の容量へ割り付ける
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
@@ -189,6 +193,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 
 生イベントは「今まで開いた全ウィンドウの題名」なので、private リポジトリにも置かない。
 位置履歴も同じ扱いで、git の外に全部残し、rollup には場所名と秒だけを出す（docs/DESIGN.md L2）。
+スマホの使用状況も git の外に置き、rollup にはカテゴリと秒だけを出す（同 L2）。
 `CHRONOFIT_HOME` で置き場所を上書きできる。
 
 `%LOCALAPPDATA%\chronofit\` の中身:
@@ -202,6 +207,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `location/<date>.json` | タイムライン書き出しを畳んだ滞在（原本は `location/exports/`） | 書き出しがあればできる |
 | `location/places.json` | 登録した場所（名前・座標・半径・家かどうか） | 手で登録したもの |
 | `location/auto_places.json` | 繰り返し行った未登録の場所に、重なった予定の件名で付けた仮の名前 | できる（読むたびに作り直す） |
+| `phone/events/<date>.jsonl` | スマホの画面の点灯・ロック解除・アプリの前面化（時刻・種類・パッケージ名） | 24時間以内なら取り直せる。それより前は戻らない |
+| `phone/pulls.jsonl` | スマホから読めた時刻（睡眠を出してよい範囲を決める） | 戻らない |
 | `payments/payments.jsonl` | 決済の時刻・店名・金額（通知メールの本文は残さない） | メールがあればできる |
 | `payments/activities.json` | 店名 → 用事の対応 | 手で登録したもの |
 | `payments/sources.json` | 読む通知メールの送信元・件名・形式 | 手で登録したもの |

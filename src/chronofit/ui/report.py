@@ -20,7 +20,7 @@
 import html as html_escape
 from datetime import timedelta
 
-from . import report_work
+from . import report_phone, report_work
 
 # 色は「席にいたか」で系統を分ける。緑＝いた、灰＝いない、青＝観ていた。
 KIND_STYLE = {
@@ -204,7 +204,7 @@ def _cards(summary):
         ("slack率", _ratio(summary["slack_ratio"]), "入力あり ÷ 在席"),
         ("受動", _hours(summary.get("passive_sec", 0.0)), "再生中（在席にも離席にも入れない）"),
         ("離席", _hours(summary["away_sec"]), "無入力・ロック・スリープ・記録なし"),
-    ]
+    ] + report_phone.cards(summary)
     return "".join(f"<div class='card'><div class='k'>{_e(k)}</div>"
                    f"<div class='v'>{_e(v)}</div><div class='n'>{_e(note)}</div></div>"
                    for k, v, note in items)
@@ -235,6 +235,7 @@ def _away_table(summary):
         rows.append(f"<tr><td class='n'>{block['start']:%H:%M}-{block['end']:%H:%M}</td>"
                     f"<td class='n'>{block['sec'] / 60:.0f}分</td>"
                     f"<td>{cell}{' / ' + _e(extra) if extra else ''}</td>"
+                    + report_phone.away_cells(summary, block) +
                     f"<td class='muted'>{where}</td></tr>")
     unlabeled = sum(1 for b in blocks if not b.get("label"))
     # 「未ラベル 0本」は書かない。片付いている状態を、片付いていない状態と
@@ -242,7 +243,8 @@ def _away_table(summary):
     note = (f"<p class='sub'>{len(blocks)}本"
             + (f" / 未ラベル {unlabeled}本（<code>chronofit label</code> で付ける）"
                if unlabeled else "") + "</p>")
-    return (note + "<table><tr><th>時刻</th><th>長さ</th><th>ラベル</th><th>場所</th></tr>"
+    return (note + "<table><tr><th>時刻</th><th>長さ</th><th>ラベル</th>"
+            + report_phone.away_head(summary) + "<th>場所</th></tr>"
             + "".join(rows) + "</table>")
 
 
@@ -320,6 +322,7 @@ def render(summary, date_label, board_rows=None, board_summary=None, sources=Non
         "<h2>残っているもの</h2>", _board_table(board_rows, board_summary, as_of),
         "<h2>1日の流れ</h2>", _timeline(summary),
         "<h2>離席</h2>", _away_table(summary),
+        "<h2>睡眠とスマホ</h2>", report_phone.section(summary),
         "<h2>アプリ・タイトル別</h2>", _title_table(summary),
         _paths_block(sources),
     ]
