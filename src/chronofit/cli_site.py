@@ -79,7 +79,8 @@ def write_day(day, settings, tasks=None, today=None, cache=None):
         ("所要時間DB（終わったタスクの実測）", estimate_db.default_path(paths.data_root())),
     ]
     records = cli._read_records(day, bounds)
-    extras = report_extras.gather(day, settings, bounds=bounds, records=records, today=today)
+    extras = report_extras.gather(day, settings, bounds=bounds, records=records, today=today,
+                                  phone_spans=summary.get("phone_spans"))
     extras["project_groups"] = settings.get("project_groups") or {}
     extras["default_group"] = settings.get("default_project_group") or "開発"
     nav = {"start": bounds[0], "end": bounds[1], "prev": f"{_shift(day, -1)}.html",

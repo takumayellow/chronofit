@@ -189,7 +189,7 @@ def render(summary, date_label, board_rows=None, board_summary=None, sources=Non
            as_of=None, extras=None, day=None):
     """1日ぶんの HTML を組み立てる。文字列を返すだけで、書き出しはしない。
 
-    `extras` は `{"done", "work", "agenda", "project_groups", "default_group"}`。
+    `extras` は `{"done", "work", "outings", "agenda", "project_groups", "default_group"}`。
     上から「何をしたか → 予定どおりだったか → 何が残っているか」の順に読めるようにし、
     時間の使い方の細部（流れ・離席・アプリ別）はその下に置く。
     `day` は生活の1日の `{"start", "end", "prev", "next"}`（前後のページへのリンク）。
@@ -198,7 +198,8 @@ def render(summary, date_label, board_rows=None, board_summary=None, sources=Non
     day = day or {}
     projects = report_projects.section(
         extras.get("done"), extras.get("work"), summary.get("net_sec") or 0.0,
-        extras.get("project_groups"), extras.get("default_group") or "開発")
+        extras.get("project_groups"), extras.get("default_group") or "開発",
+        outings=extras.get("outings"), phone=summary.get("phone_categories"))
     body = [
         _header(date_label, day),
         f"<div class='stats'>{_cards(summary)}</div>",
