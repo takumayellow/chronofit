@@ -22,13 +22,19 @@ def day_range(day, tz=None):
     return f"{start.isoformat()}..{end.isoformat()}"
 
 
-def fetch(day, tz=None):
+def span_range(start, end):
+    """任意の区間 [start, end) を検索の `開始..終了` に（生活の1日で切るとき）。"""
+    return (f"{start.isoformat(timespec='seconds')}.."
+            f"{(end - timedelta(seconds=1)).isoformat(timespec='seconds')}")
+
+
+def fetch(day, tz=None, bounds=None):
     """`{"prs": [...], "issues": [...], "commits": {リポジトリ名: 件数}, "errors": [...]}`。
 
     3つの検索は別々に失敗しうる（コミット検索だけ制限に当たる等）。1つ落ちても
     取れた分は捨てず、落ちた検索の理由を `errors` に残す。
     """
-    window = day_range(day, tz)
+    window = span_range(*bounds) if bounds else day_range(day, tz)
     errors = []
 
     def search(kind, *args):
@@ -39,8 +45,8 @@ def fetch(day, tz=None):
             errors.append(f"{kind}: {error}")
             return []
 
-    prs = search("prs", "--merged-at", window, "--json", "repository,number,title")
-    issues = search("issues", "--closed", window, "--json", "repository,number,title")
+    prs = search("prs", "--merged-at", window, "--json", "repository,number,title,closedAt")
+    issues = search("issues", "--closed", window, "--json", "repository,number,title,closedAt")
     commits = search("commits", "--author-date", window, "--json", "repository,sha")
     return {"prs": _rows(prs), "issues": _rows(issues), "commits": _count(commits),
             "errors": errors}
@@ -48,7 +54,8 @@ def fetch(day, tz=None):
 
 def _rows(found):
     rows = [{"repo": (row.get("repository") or {}).get("name") or "",
-             "number": row.get("number"), "title": row.get("title") or ""}
+             "number": row.get("number"), "title": row.get("title") or "",
+             "closed": row.get("closedAt") or ""}
             for row in found if isinstance(row, dict)]
     return sorted(rows, key=lambda row: (row["repo"], row["number"] or 0))
 

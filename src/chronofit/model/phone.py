@@ -100,17 +100,20 @@ def _merge(intervals):
     return merged
 
 
-def app_seconds(events, start, end, until=None):
-    """start〜end の間の、アプリ（パッケージ）ごとの前面時間（秒）。
+def _subtract(xs, ys):
+    """区間列 xs から ys を除いた残り。"""
+    out = []
+    for a, b in _merge(xs):
+        pieces = [(a, b)]
+        for c, d in _merge(ys):
+            pieces = [part for s, e in pieces
+                      for part in ((s, min(e, c)), (max(s, d), e)) if part[1] > part[0]]
+        out += pieces
+    return out
 
-    前面は「最後に前へ出たアプリ」とし、次のアプリが前へ出るか、画面が消えた・ロック
-    された時点で切る。使用区間の外（ロック画面の上など）の時間は数えない。
-    閉じる記録がまだ無い最後のアプリは、使用区間の終わり（`until` で打ち切る）まで数える。
 
-    PAUSED / STOPPED では切らない。同じアプリの中で画面を移るたびに、古い画面の
-    PAUSED・STOPPED が新しい画面の RESUMED の後に届く端末があり、それで切ると
-    使っている最中のアプリの時間が消える。
-    """
+def _app_pieces(events, end):
+    """(パッケージ, 前へ出た時刻, 切れた時刻) の列。切り方は `app_seconds` の説明どおり。"""
     pieces = []
     current, since = None, None
     for event in events:
@@ -124,6 +127,53 @@ def app_seconds(events, start, end, until=None):
             current = None
     if current is not None and since < end:
         pieces.append((current, since, end))
+    return pieces
+
+
+def automated_intervals(events, packages, until=None):
+    """自動で動かしているアプリが前面にいた区間（使用区間の中だけ）。
+
+    自動プレイは画面を点けたまま端末がタップを送るので、イベントだけ見ると人が
+    触っているのと区別が付かない。利用側が「自動で動かしている」と指定したアプリの
+    前面時間は人の操作に数えない（その代わり、同じアプリを手で触った時間も外れる）。
+    """
+    packages = set(packages or ())
+    if not packages:
+        return []
+    usage = _merge(usage_intervals(events, until=until))
+    horizon = usage[-1][1] if usage else None
+    if horizon is None:
+        return []
+    spans = [(a, b) for package, a, b in _app_pieces(events, horizon) if package in packages]
+    return _merge(_intersect(_merge(spans), usage))
+
+
+def human_usage(events, packages=(), until=None):
+    """人が触っていた使用区間（自動で動かしているアプリの前面を除く）。"""
+    usage = usage_intervals(events, until=until)
+    return _subtract(usage, automated_intervals(events, packages, until=until))
+
+
+def night_sec(night, usage):
+    """1晩の睡眠の長さ。夜中に少し触った時間は除く。"""
+    if not night:
+        return 0.0
+    span = [(night["start"], night["end"])]
+    return _total(span) - _total(_intersect(span, _merge(usage)))
+
+
+def app_seconds(events, start, end, until=None):
+    """start〜end の間の、アプリ（パッケージ）ごとの前面時間（秒）。
+
+    前面は「最後に前へ出たアプリ」とし、次のアプリが前へ出るか、画面が消えた・ロック
+    された時点で切る。使用区間の外（ロック画面の上など）の時間は数えない。
+    閉じる記録がまだ無い最後のアプリは、使用区間の終わり（`until` で打ち切る）まで数える。
+
+    PAUSED / STOPPED では切らない。同じアプリの中で画面を移るたびに、古い画面の
+    PAUSED・STOPPED が新しい画面の RESUMED の後に届く端末があり、それで切ると
+    使っている最中のアプリの時間が消える。
+    """
+    pieces = _app_pieces(events, end)
     usage = _intersect(_merge(usage_intervals(events, until=until)), [(start, end)])
     totals = {}
     for package, a, b in pieces:

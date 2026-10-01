@@ -6,6 +6,7 @@
     python -m chronofit status               収集状況の確認
     python -m chronofit rollup               1日分を畳んで net/wall/離席に分ける
     python -m chronofit report               1日の測定結果を HTML にして開く
+    python -m chronofit site                 書き出したページを 127.0.0.1 で配る（常駐）
     python -m chronofit label                離席ブロックにラベルを付ける（1日1回）
     python -m chronofit location import F    スマホの位置履歴を取り込み、離席を場所で割る
     python -m chronofit location serve       スマホ（OwnTracks）から位置を受け取る（常駐）
@@ -32,18 +33,19 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_claude, cli_outing, cli_phone, cli_prs, config, paths, report_extras
+from . import cli_claude, cli_outing, cli_phone, cli_prs, cli_site, config, paths
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
 from .plan import tasks as tasks_store
 from .estimate import db as estimate_db
 from .model import context as context_model
+from .model import day as day_model
 from .model import labels as labels_model
 from .model import phone as phone_model
 from .model import rollup
 from .sources import browser, clockify, history, location, owntracks, todo_issues
-from .ui import ask, report
+from .ui import ask
 
 
 def cmd_collect(args):
@@ -186,24 +188,46 @@ def _resolve_date(value):
         raise SystemExit(f"日付は YYYY-MM-DD / today / yesterday で書く: {value}")
 
 
-def _load_summary(date):
-    """その日のロールアップをラベル込みで作る。生ログが無ければ None。"""
-    path = paths.raw_dir() / f"{date}.jsonl"
-    if not path.is_file():
+def _read_records(date, bounds=None):
+    """その日の生レコード。`bounds` があれば、前後の暦の日から読んでその区間に切る。"""
+    if bounds is None:
+        path = paths.raw_dir() / f"{date}.jsonl"
+        return rollup.read_day(path) if path.is_file() else None
+    files = [paths.raw_dir() / f"{name}.jsonl" for name in day_model.calendar_days(date)]
+    if not any(path.is_file() for path in files):
         return None
-    summary = rollup.summarize_day(rollup.read_day(path))
-    rollup.merge_labels(summary, labels_model.load(date, paths.label_dir()))
+    records = [record for path in files if path.is_file() for record in rollup.read_day(path)]
+    return day_model.clip_records(records, *bounds)
+
+
+def _load_summary(date, bounds=None, settings=None):
+    """その日のロールアップをラベル込みで作る。生ログが無ければ None。
+
+    `bounds` を渡すと暦の日ではなく生活の1日（`model/day.py`）で切る。日次ページは
+    こちらで、共有用の rollup は暦の日のまま（他の道具が日付で読むため）。
+    """
+    records = _read_records(date, bounds)
+    if records is None:
+        return None
+    summary = rollup.summarize_day(records)
+    days = day_model.calendar_days(date) if bounds else [date]
+    labels = {}
+    for name in days:
+        labels.update(labels_model.load(name, paths.label_dir()))
+    rollup.merge_labels(summary, labels)
     # 場所は位置履歴を取り込んだ日にだけ付く。無ければ従来どおり長さとラベルだけ。
     # 期限切れの座標は読む前に消す。取り込みが止まっても、読むたびに期限が守られる。
-    settings = config.load()
+    settings = settings or config.load()
     root = paths.location_dir()
     location.purge(root, datetime.now().date(), _retention(settings))
     places = _places(settings)
-    stays = location.merge_sources(location.stays_around(date, root, places),
-                                   owntracks.stays_for(date, root, places))
+    tracked = []
+    for name in days:
+        tracked = location.merge_sources(tracked, owntracks.stays_for(name, root, places))
+    stays = location.merge_sources(location.stays_around(days[-1], root, places), tracked)
     location.annotate(summary, stays)
     # 睡眠とスマホはスマホのイベントがある日にだけ付く
-    return cli_phone.annotate_summary(summary, date, settings)
+    return cli_phone.annotate_summary(summary, date, settings, bounds=bounds)
 
 
 def cmd_rollup(args):
@@ -891,40 +915,12 @@ def _board_for(date, settings, tasks_path=None):
 
 
 def cmd_report(args):
-    """1日の測定結果を1枚の HTML にして開く。
+    """1日の測定結果を HTML にして開く（生活の1日で1枚 + 複数日の一覧）。
 
     標準出力は流れて消えるので、「今日はどうだったか」を見返す面をファイルとして
     残す。中身は生タイトルを含むため、置き場所は data_root() の下に固定する。
     """
-    date = _resolve_date(args.date)
-    summary = _load_summary(date)
-    if summary is None:
-        print(f"{date} の生ログが無い。")
-        return 1
-
-    settings = config.load()
-    # 離席の中身は両隣の前景から当たる。ラベルを付けていない日でも、
-    # 「何の前後で離れたか」だけは見えるようにする。
-    context_model.annotate(summary, settings.get("title_rules") or [])
-
-    if not args.tasks and date == datetime.now().strftime("%Y-%m-%d"):
-        sync_issues(quiet=True)            # 今日のページは、いま開いている Issue で数える
-    rows, board_summary, as_of = _board_for(date, settings, args.tasks)
-    sources = [
-        ("この日の生スパン（1行1スパン・タイトル込み）", paths.raw_dir() / f"{date}.jsonl"),
-        ("畳んだ集計（共有できる粒度・タイトルは入らない）", paths.rollup_dir() / f"{date}.json"),
-        ("離席に付けたラベル", paths.label_dir() / f"{date}.json"),
-        ("やることの一覧", paths.tasks_path()),
-        ("その日に見えていた残量", paths.board_dir() / f"{date}.json"),
-        ("所要時間DB（終わったタスクの実測）", estimate_db.default_path(paths.data_root())),
-    ]
-    extras = report_extras.gather(date, settings)
-    content = report.render(summary, date, rows, board_summary, sources, as_of, extras)
-    destination = report.write(paths.ensure(paths.report_dir()) / f"{date}.html", content)
-    print(f"-> {destination}")
-    if not args.no_open:
-        _open_file(destination)
-    return 0
+    return cli_site.run(args, _open_file)
 
 
 def cmd_backfill_clockify(args):
@@ -1059,10 +1055,18 @@ def build_parser():
     board_cmd.set_defaults(func=cmd_board)
 
     report_cmd = sub.add_parser("report", help="1日の測定結果を HTML にして開く")
-    report_cmd.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は今日）")
+    report_cmd.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は今日）。"
+                            "1日は設定 day_start（既定 05:00）で区切る")
     report_cmd.add_argument("--tasks", type=Path, help="別のタスク定義を使う")
     report_cmd.add_argument("--no-open", action="store_true", help="書き出すだけで開かない")
+    report_cmd.add_argument("--rebuild", action="store_true",
+                            help="直近 --days 日ぶんのページを全部書き直す")
+    report_cmd.add_argument("--days", type=int, default=14, help="--rebuild で書き直す日数")
     report_cmd.set_defaults(func=cmd_report)
+
+    site_cmd = sub.add_parser("site", help="書き出したページを 127.0.0.1 で配る（常駐）")
+    site_cmd.add_argument("--port", type=int, default=cli_site.SITE_PORT)
+    site_cmd.set_defaults(func=lambda args: cli_site.serve(args))
 
     daily = sub.add_parser("daily", help="前日を畳んで進捗を残す（毎晩の自動実行用）")
     daily.add_argument("--date", help="YYYY-MM-DD / today / yesterday（既定は前日）")

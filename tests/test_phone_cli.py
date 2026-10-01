@@ -109,3 +109,32 @@ def test_appsはパッケージ名を画面にだけ出す(tmp_path, monkeypatch
     assert cli_phone.show_apps(days=2, today=at(0).date()) == 0
     out = capsys.readouterr().out
     assert "com.example.video" in out and "(未分類)" in out
+
+
+def _logical(date):
+    from datetime import time
+    from chronofit.model import day
+    return day.bounds(date, time(5))
+
+
+def test_生活の1日では夜中の作業は前の日に入り_睡眠はその朝に終わった1晩を数える(
+        tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    evening = cli._load_summary("2026-09-26", bounds=_logical("2026-09-26"))
+    assert evening["net_sec"] == 1.5 * 3600            # 21:00〜22:30 の入力
+    assert evening["phone_sec"] == 40 * 60             # 23:10〜23:50 は前の日の夜
+    morning = cli._load_summary("2026-09-27", bounds=_logical("2026-09-27"))
+    assert morning["net_sec"] == 3 * 3600              # 9:00〜12:00。0〜5時は入らない
+    assert morning["sleep_sec"] == 7 * 3600 + 600      # 23:50〜7:00 を割らずに数える
+    assert morning["sleep_spans"][0] == (at(23, 50, day=26), at(7))
+
+
+def test_自動プレイの時間は別に持ち_スマホの時間に入れない(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    (tmp_path / "config.json").write_text(json.dumps(
+        {"phone": {"categories": {"com.example.chat": "連絡"},
+                   "automated": ["com.example.video"]}}), encoding="utf-8")
+    summary = cli._load_summary("2026-09-26", bounds=_logical("2026-09-26"))
+    assert summary["phone_auto_sec"] == 30 * 60 - 3
+    assert summary["phone_sec"] == 10 * 60 + 3
+    assert "com.example.video" not in str(summary["phone_categories"])

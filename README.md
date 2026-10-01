@@ -107,8 +107,9 @@ python -m chronofit label       # 15分以上の離席ブロックにラベル�
 python -m chronofit daily       # 前日を畳んで進捗を残す（毎晩自動で走る。手では要らない）
 
 # 見返すとき
-python -m chronofit report                 # 今日の1日を HTML にして開く
+python -m chronofit report                 # 今日の1日を HTML にして開く（前日と一覧も書き直す）
 python -m chronofit report --date 2026-08-08 --no-open   # 別の日・開かずに書き出すだけ
+python -m chronofit report --rebuild --days 14 --no-open # 直近14日ぶんと一覧をまとめて書き直す
 
 # 終わったら所要時間DBへ入れる
 python -m chronofit done 応用数学B 過去問 --match 2024   # PC作業ぶんを実測から
@@ -216,6 +217,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 | `calendar/events.json` | カレンダーの予定の時刻・件名・場所欄（説明文や参加者は残さない） | 取り直せばできる |
 | `calendar/calendar-token.bin` | カレンダー読み取り専用のトークン（DPAPI で暗号化） | 同意し直せばできる |
 | `report/<date>.html` | 1日の分析画面。生タイトルを含む | できる |
+| `report/index.html` | 直近14日を1行ずつ並べた一覧 | できる |
 | `tasks.json` | やることの一覧（Issue から写したものと手で書いたもの） | Issue 由来は `task sync` で戻る。手で書いたものは戻らない |
 | `board/<date>.json` | その日に見えていた残量 | **できない**（過去の現在地は計算できない） |
 | `instances.jsonl` | 所要時間DB（終わったタスクの実測。`done` で入れたものと、マージした PR から自動で入れたもの） | `done` のぶんはできる。PR のぶんは会話ログが消えた後は戻らない |
@@ -225,11 +227,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 `report` が生タイトルを載せるのは、**自分が見るための面**だから。共有できる粒度は
 `rollup/` のほうで、そちらには意図的にタイトルを入れていない。
 
+`report` は生活の1日（設定 `day_start`、既定 `05:00` から翌 `05:00`）で1ページを作る。
+夜中の作業や寝る前のスマホは前の日のページに入る。`index.html` から各日のページへ飛べる。
+
 `report` の上半分は「何が片付き、どこで何をし、予定どおりだったか」を出す。
 片付いたものは `gh search` で読むその日のマージ済み PR・閉じた Issue・コミット。
+これと作業時間をリポジトリごとに寄せ、括り（設定 `project_groups` のリポジトリ名パターン。
+当たらないものは `default_project_group`）→ プロジェクトの2段に畳んで出す。
 作業の内訳は、ターミナルのタイトル（Claude が付けた作業名）を `~/.claude*/projects` の
 会話ログで引き、その時刻の作業ディレクトリからリポジトリを決める（会話の中身は読まない。
 置き場所は設定 `claude_dirs` で変えられる）。予定と実際は `calendar check` と同じ突き合わせ。
+
+`chronofit site`（タスク `chronofit-site` が常駐させる）はこのフォルダだけを `127.0.0.1:8765` で
+配る。スマホなど自分の端末からは `tailscale serve --bg http://127.0.0.1:8765` で tailnet の中にだけ
+通す。`funnel` は使わない（公開すると生タイトルが外に出る）。
 
 このリポジトリには個人固有の定数（科目名・容量・分類ルール）を一切置かない。
 それらは利用側から設定として注入する。

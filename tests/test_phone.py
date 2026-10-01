@@ -271,3 +271,19 @@ def test_日の範囲を渡すと在席と判定された夜中も睡眠に数�
     phone_model.annotate(summary, sleeps, [], {}, bounds=(at(0), at(0, day=28)))
     assert summary["sleep_sec"] == 7 * 3600
     assert summary["away_awake_sec"] == 10 * 3600 - 4 * 3600
+
+
+def test_自動で動かしているアプリの前面は人の操作に数えない():
+    events = phone.parse_usagestats(DUMP)
+    auto = phone_model.automated_intervals(events, ["com.example.video"])
+    assert auto == [(at(23, 20, day=26, second=3), at(23, 50, day=26))]
+    human = phone_model.human_usage(events, ["com.example.video"])
+    assert human == [(at(23, 10, day=26), at(23, 20, day=26, second=3)),
+                     (at(7), at(7, 15, second=2))]
+    assert phone_model.human_usage(events) == phone_model.usage_intervals(events)
+
+
+def test_1晩の睡眠は夜中に触った時間を除く():
+    night = {"start": at(0), "end": at(7), "sec": 7 * 3600.0}
+    assert phone_model.night_sec(night, [(at(3), at(3, 10))]) == 7 * 3600 - 600
+    assert phone_model.night_sec(None, []) == 0.0
