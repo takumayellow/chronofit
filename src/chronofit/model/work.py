@@ -75,7 +75,7 @@ def attribute(spans, sessions, cwds_near, repo_of=repo_name):
         seconds = float(span.get("active_sec") or 0)
         if seconds <= 0:
             continue
-        key = _key(span, sessions, cwds_near, repo_of, repo_cache)
+        key = span_key(span, sessions, cwds_near, repo_of, repo_cache)
         if not key:
             continue
         row = table.setdefault(key, {"repo": key[0], "task": key[1], "active_sec": 0.0,
@@ -86,7 +86,8 @@ def attribute(spans, sessions, cwds_near, repo_of=repo_name):
     return sorted(table.values(), key=lambda row: -row["active_sec"])
 
 
-def _key(span, sessions, cwds_near, repo_of, repo_cache):
+def span_key(span, sessions, cwds_near, repo_of, repo_cache):
+    """スパン1本の (リポジトリ, 作業)。会話にも GitHub のページにも当たらなければ None。"""
     proc, title = span.get("proc"), span.get("title") or ""
     if proc in BROWSERS:
         repo = github_repo(title)
@@ -96,18 +97,23 @@ def _key(span, sessions, cwds_near, repo_of, repo_cache):
     task = task_name(title)
     if task not in sessions:
         return None
+    cwds = cwds_near(sessions[task], datetime.fromisoformat(span["start"]))
+    return (vote(cwds, repo_of, repo_cache) or UNKNOWN_REPO, task)
+
+
+def vote(cwds, repo_of, repo_cache):
+    """作業ディレクトリの列から、いちばん多いリポジトリ。列が空なら None。"""
     votes = Counter()
-    for cwd in cwds_near(sessions[task], datetime.fromisoformat(span["start"])):
+    for cwd in cwds:
         if cwd not in repo_cache:
             repo_cache[cwd] = repo_of(cwd)
         name, in_git = repo_cache[cwd]
         # git の外（ホームや作業用の一時フォルダ）は、git の中の記録が1つも無いときだけ使う。
         votes[(in_git, name)] += 1
     if not votes:
-        return (UNKNOWN_REPO, task)
+        return None
     in_git = any(key[0] for key in votes)
-    name = max((key for key in votes if key[0] == in_git), key=lambda key: votes[key])[1]
-    return (name, task)
+    return max((key for key in votes if key[0] == in_git), key=lambda key: votes[key])[1]
 
 
 def by_repo(rows):

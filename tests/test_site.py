@@ -172,8 +172,8 @@ def site(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "sync_issues", lambda quiet=False: synced.append(True))
     monkeypatch.setattr(context_model, "annotate", lambda summary, rules: None)
     monkeypatch.setattr(report_extras, "gather",
-                        lambda day, settings, bounds=None, records=None, today=None:
-                        {"done": None, "work": None, "agenda": None})
+                        lambda day, settings, bounds=None, records=None, today=None,
+                        phone_spans=(): {"done": None, "work": None, "agenda": None})
     monkeypatch.setattr(cli_site, "logical_today", lambda settings: "2026-03-11")
     return tmp_path, synced
 
