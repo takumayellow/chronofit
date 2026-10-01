@@ -22,6 +22,8 @@
     chronofit-location  スマホから位置を受け取る常駐（`chronofit location setup` 済みのときだけ）
     chronofit-phone     スマホの使用状況を 30 分ごとに無線 adb で読む。端末は直近24時間しか
                         持たないので、PC が1日以上止まらなければ取りこぼさない
+    chronofit-media     スマホで再生中の題・チャンネルを 1 分ごとに読む常駐。その瞬間の
+                        ものしか読めず後から取り返せないので、読み続ける
 
 .PARAMETER SnapshotTime
   スナップショットを走らせる時刻 (HH:mm)。既定 13:00。
@@ -145,6 +147,18 @@ Register-ScheduledTask -TaskName "$Prefix-phone" -Force `
     -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit phone pull') `
     -Trigger $phoneEvery30 `
     -Settings $phoneSettings | Out-Null
+
+# --- スマホで再生していたもの ---------------------------------------------
+# 再生セッションの題は読んだ瞬間のものしか分からないので、常駐して 1 分ごとに読む。
+$mediaSettings = New-ScheduledTaskSettingsSet @common `
+    -MultipleInstances IgnoreNew `
+    -RestartInterval (New-TimeSpan -Minutes 5) -RestartCount 3
+$mediaSettings.ExecutionTimeLimit = 'PT0S'
+Register-ScheduledTask -TaskName "$Prefix-media" -Force `
+    -Description 'chronofit: スマホで再生中の題を 1 分ごとに読む（常駐 + 30分ごとの見張り）' `
+    -Action  (New-ScheduledTaskAction -Execute $py.Windowless -Argument '-m chronofit phone watch') `
+    -Trigger @((New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME), $watchdog) `
+    -Settings $mediaSettings | Out-Null
 
 # --- ページの配信（127.0.0.1 だけ） -------------------------------------------
 $siteSettings = New-ScheduledTaskSettingsSet @common `

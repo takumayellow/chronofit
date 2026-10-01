@@ -53,6 +53,7 @@ def test_rollupに睡眠とスマホとカテゴリだけが出る(tmp_path, mon
     assert shared["sleep_sec"] == 7 * 3600
     assert shared["phone_sec"] == 15 * 60 + 2
     assert shared["phone_categories"] == {"連絡": 900.0}
+    assert "phone_apps" not in shared   # アプリ名・題は共有できる形に入れない
     assert shared["wake"].startswith("2026-09-27T07:00:00")
     assert shared["away_blocks"][0]["sleep_sec"] == 7 * 3600
     assert "com.example" not in written            # アプリ名は共有の粒度に出さない

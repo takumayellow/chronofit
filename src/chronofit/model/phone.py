@@ -210,6 +210,92 @@ def by_category(apps, mapping):
     return totals
 
 
+# 1回の読み取りが前後に覆う長さ。読む間隔（既定 60 秒）より少し長く取り、
+# 読み取りが1回飛んだくらいでは「何を見ていたか分からない」にしない
+MEDIA_REACH_SEC = 90
+NO_MEDIA = "何を再生していたかの記録なし"
+# パッケージ名から呼び名を作るときに飛ばす、どのアプリにも付く部分
+_GENERIC_PARTS = {"com", "jp", "org", "net", "android", "app", "apps", "browser", "mobile",
+                  "google", "naver"}
+
+
+def _one_per_moment(samples):
+    """同じ時刻・同じアプリのセッションが複数あれば、最初の1つだけ残す。"""
+    chosen = {}
+    for sample in samples:
+        chosen.setdefault((sample["time"], sample["package"]), sample)
+    return sorted(chosen.values(), key=lambda sample: sample["time"])
+
+
+def media_seconds(events, samples, start, end, until=None, reach=MEDIA_REACH_SEC):
+    """アプリの前面時間を、そのとき再生セッションが持っていたタイトルへ割る。
+
+    読み取りの1回は、前後の読み取りとの中点まで（最大 `reach` 秒）を覆うとみなす。
+    数えるのは、そのアプリが前面にいて人が使っていた時間だけ（裏で流していた分は入れない）。
+    返り値は {パッケージ: {(タイトル, 副題): 秒}}。読み取りの無い時間は入れない。
+    """
+    usage = _intersect(_merge(usage_intervals(events, until=until)), [(start, end)])
+    by_package = {}
+    for sample in _one_per_moment(samples):
+        by_package.setdefault(sample["package"], []).append(sample)
+    reach = timedelta(seconds=reach)
+    result = {}
+    for package, a, b in _app_pieces(events, end):
+        rows = by_package.get(package)
+        shown = _intersect([(a, b)], usage) if rows else []
+        if not shown:
+            continue
+        for i, row in enumerate(rows):
+            moment = row["time"]
+            if moment + reach <= a or moment - reach >= b:
+                continue
+            low, high = moment - reach, moment + reach
+            if i:
+                low = max(low, moment - (moment - rows[i - 1]["time"]) / 2)
+            if i + 1 < len(rows):
+                high = min(high, moment + (rows[i + 1]["time"] - moment) / 2)
+            seconds = _total(_intersect(shown, [(low, high)]))
+            if seconds > 0:
+                titles = result.setdefault(package, {})
+                key = (row["title"], row.get("subtitle"))
+                titles[key] = titles.get(key, 0.0) + seconds
+    return result
+
+
+def app_label(package, labels=None):
+    """画面に出すアプリの呼び名。設定の `labels` に無ければパッケージ名の特徴的な部分。"""
+    if (labels or {}).get(package):
+        return labels[package]
+    parts = [part for part in package.split(".") if part.lower() not in _GENERIC_PARTS]
+    return parts[-1] if parts else package
+
+
+def app_breakdown(apps, mapping, labels=None, media=None):
+    """カテゴリごとの内訳。{カテゴリ: [{"task", "active_sec"}]}（時間の長い順）。
+
+    再生していたものが読めたアプリは、タイトル（と副題）ごとに分け、残りを
+    「記録なし」として同じアプリの名前で出す。
+    """
+    out = {}
+    for package, seconds in apps.items():
+        name = app_label(package, labels)
+        rows = out.setdefault((mapping or {}).get(package) or UNCATEGORIZED, [])
+        titles = (media or {}).get(package) or {}
+        known = 0.0
+        for (title, subtitle), sec in titles.items():
+            sec = min(sec, seconds - known)
+            if sec <= 0:
+                continue
+            known += sec
+            label = f"{name}: {title}" + (f"（{subtitle}）" if subtitle else "")
+            rows.append({"task": label, "active_sec": sec})
+        rest = seconds - known
+        if rest > 0:
+            rows.append({"task": f"{name}（{NO_MEDIA}）" if titles else name, "active_sec": rest})
+    return {category: sorted(rows, key=lambda row: -row["active_sec"])
+            for category, rows in out.items()}
+
+
 def _clock(text, fallback):
     try:
         return time.fromisoformat(str(text))

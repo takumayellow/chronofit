@@ -176,11 +176,10 @@ def connected_serials(adb="adb"):
             if len(line.split()) >= 2 and line.split()[1] == "device"]
 
 
-def fetch(serials=None, adb="adb"):
-    """使える端末を1台選んで `dumpsys usagestats` を読む。返り値は (端末, 出力)。
+def ready_serials(serials=None, adb="adb"):
+    """読みに行ける端末を候補の順に。`host:port` で見えていないものは先に `adb connect` する。
 
-    `serials` は設定に書いた候補（`host:port` なら先に `adb connect` する）。
-    無ければ見えている端末のうち最初のもの。どれも読めなければ RuntimeError。
+    候補（設定に書いたもの）が無ければ、見えている端末をそのまま返す。
     """
     candidates = [s for s in (serials or []) if _SERIAL.fullmatch(str(s))]
     for serial in candidates:
@@ -190,8 +189,16 @@ def fetch(serials=None, adb="adb"):
             _adb("disconnect", serial, adb=adb)
             _adb("connect", serial, adb=adb)
     visible = connected_serials(adb)
-    order = [s for s in candidates if s in visible] or ([] if candidates else visible)
-    for serial in order:
+    return [s for s in candidates if s in visible] or ([] if candidates else visible)
+
+
+def fetch(serials=None, adb="adb"):
+    """使える端末を1台選んで `dumpsys usagestats` を読む。返り値は (端末, 出力)。
+
+    `serials` は設定に書いた候補（`host:port` なら先に `adb connect` する）。
+    無ければ見えている端末のうち最初のもの。どれも読めなければ RuntimeError。
+    """
+    for serial in ready_serials(serials, adb):
         code, out = _adb("-s", serial, "shell", "dumpsys", "usagestats", adb=adb)
         if code == 0 and _SECTION in out:
             return serial, out
