@@ -32,10 +32,24 @@ def _moment(event):
     return datetime.fromisoformat(event["time"]).astimezone()
 
 
-def _close(start, end):
-    if (end - start).total_seconds() > MAX_USE_SEC:
-        return start + timedelta(seconds=MAX_OPEN_USE_SEC)
-    return end
+def _close(start, end, moments=()):
+    """1回の使用を区間にする。閉じる記録を欠いて長すぎる使用は、イベントのあった所だけ残す。
+
+    画面を点けたまま寝ると（自動プレイなど）、点いた時刻から朝に消すまでが1回の使用に
+    なる。そのときは中のイベントが `MAX_OPEN_USE_SEC` より長く途切れた所で割り、
+    途切れた間は使っていないとみなす（朝に手で触った分を落とさない）。
+    """
+    if (end - start).total_seconds() <= MAX_USE_SEC:
+        return [(start, end)]
+    gap = timedelta(seconds=MAX_OPEN_USE_SEC)
+    edges = [start] + sorted(m for m in moments if start < m < end) + [end]
+    pieces, since = [], start
+    for before, after in zip(edges, edges[1:]):
+        if after - before > gap:
+            pieces.append((since, before if before > since else since + gap))
+            since = after
+    pieces.append((since, end))
+    return [(a, b) for a, b in pieces if b > a]
 
 
 def usage_intervals(events, until=None):
@@ -47,17 +61,21 @@ def usage_intervals(events, until=None):
     result = []
     screen_on = None        # 画面が点いた時刻
     confirmed = False       # 点いている間に解除かアプリの前面化があったか
+    moments = []            # 点いている間のイベントの時刻
     for event in events:
         moment, kind = _moment(event), event["type"]
+        if screen_on is not None:
+            moments.append(moment)
         if kind == "SCREEN_INTERACTIVE":
             if screen_on is None:
-                screen_on, confirmed = moment, False
+                screen_on, confirmed, moments = moment, False, []
         elif kind in _OPENERS:
             if screen_on is not None:
                 confirmed = True
         elif kind in _CLOSERS:
             if screen_on is not None and confirmed and moment > screen_on:
-                result.append((screen_on, _close(screen_on, moment)))
+                result += _close(screen_on, moment, moments)
+            moments = []
             if kind == "KEYGUARD_SHOWN":
                 # ロックをかけて画面はまだ点いている。次の解除で使用が再開する
                 screen_on = moment if screen_on is not None else None

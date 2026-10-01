@@ -107,6 +107,16 @@ def test_終わりの無い使用は上限で打ち切る():
     assert usage == [(at(9), at(9) + timedelta(seconds=phone_model.MAX_OPEN_USE_SEC))]
 
 
+def test_点けたまま寝た夜は途切れた所で割り_朝の操作を残す():
+    events = [{"time": "2026-09-27T00:30:00", "type": "SCREEN_INTERACTIVE", "package": "android"},
+              {"time": "2026-09-27T00:30:05", "type": "KEYGUARD_HIDDEN", "package": "android"},
+              {"time": "2026-09-27T00:40:00", "type": "ACTIVITY_RESUMED", "package": "com.example.game"},
+              {"time": "2026-09-27T07:30:00", "type": "ACTIVITY_RESUMED", "package": "com.example.chat"},
+              {"time": "2026-09-27T08:00:00", "type": "SCREEN_NON_INTERACTIVE", "package": "android"}]
+    usage = phone_model.usage_intervals(events)
+    assert usage == [(at(0, 30), at(0, 40)), (at(7, 30), at(8))]
+
+
 def test_アプリ別の前面時間():
     apps = phone_model.app_seconds(phone.parse_usagestats(DUMP), at(0), at(0, day=28))
     assert apps == {"com.example.chat": 15 * 60}
