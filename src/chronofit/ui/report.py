@@ -116,6 +116,13 @@ def _title_table(summary, limit=15):
             + _table(head + "".join(rows[limit:]) + "</table>") + "</details>")
 
 
+def _target(row):
+    """対象の欄。GitHub の Issue から来たタスクは、その Issue へのリンクにする。"""
+    text = row.get("target") or ""
+    url = style.issue_url(row.get("issue"))
+    return style.link(url, text) if url and text else _e(text)
+
+
 def _board_table(board_rows, board_summary, as_of=None):
     if not board_rows:
         return ("<p class='muted'>やることの一覧が空。"
@@ -129,7 +136,7 @@ def _board_table(board_rows, board_summary, as_of=None):
         pace = f"{row['hours_per_day']:.1f}h/日" if row["hours_per_day"] else ""
         rows.append(
             f"<tr><td>{_e(row['subject'])}</td><td class='muted'>{_e(row['kind'])}</td>"
-            f"<td class='t'>{_e(row.get('target') or '')}</td>"
+            f"<td class='t'>{_target(row)}</td>"
             f"<td class='n'>{row['done']}/{row['goal']}</td>"
             f"<td class='n'>{_e(hours)}</td>"
             f"<td class='n{' warn' if row['overdue'] else ''}'>{_e(due)}</td>"
@@ -202,7 +209,7 @@ def render(summary, date_label, board_rows=None, board_summary=None, sources=Non
         + "</section>",
         _section("1日の流れ", timeline.render(summary, day.get("start"), day.get("end"))),
         _section("離席", _away_table(summary)),
-        _section("睡眠とスマホ", _table_or(report_phone.section(summary))),
+        _section("スマホの使い道", _table_or(report_phone.section(summary))),
         _section("アプリ・タイトル別", _title_table(summary)),
         _paths_block(sources),
     ]
