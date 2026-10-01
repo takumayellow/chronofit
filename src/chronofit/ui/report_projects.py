@@ -10,7 +10,7 @@
 from datetime import datetime
 from fnmatch import fnmatch
 
-from .style import e
+from .style import e, link
 
 MIN_SHOWN_SEC = 60   # これ未満の作業は内訳に出さない（合計には入れる）
 UNKNOWN = "(不明)"
@@ -95,7 +95,7 @@ def _done_list(title, rows):
     if not rows:
         return ""
     items = "".join(f"<li><span class='no'>#{e(row.get('number'))}</span>"
-                    f"<span class='what'>{e(row.get('title'))}</span>"
+                    f"<span class='what'>{link(row.get('url'), row.get('title'))}</span>"
                     f"<span class='when'>{e(_clock(row.get('closed')))}</span></li>"
                     for row in rows)
     return f"<div><h4>{title}</h4><ul>{items}</ul></div>"

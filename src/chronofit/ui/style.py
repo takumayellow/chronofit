@@ -4,6 +4,7 @@
 色は変数で持ち、明るい画面と暗い画面で同じ変数名の値だけを入れ替える。
 """
 import html as html_escape
+import re
 
 _LIGHT = """
   --bg: #f3f4f1; --surface: #ffffff; --sunk: #eceee9;
@@ -190,6 +191,25 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 13px;
 
 def e(text):
     return html_escape.escape(str(text if text is not None else ""), quote=True)
+
+
+GITHUB = "https://github.com/"
+_ISSUE_REF = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
+
+
+def issue_url(ref):
+    """`owner/repo#12` → Issue の URL。形が違えば None。"""
+    match = _ISSUE_REF.match(str(ref or ""))
+    if not match or any(part in {".", ".."} for part in match.group(1).split("/")):
+        return None
+    return f"{GITHUB}{match.group(1)}/issues/{match.group(2)}"
+
+
+def link(url, text):
+    """GitHub への外部リンク。それ以外の URL（javascript: 等）はリンクにせず文字だけ出す。"""
+    if not str(url or "").startswith(GITHUB):
+        return e(text)
+    return (f"<a href='{e(url)}' target='_blank' rel='noopener noreferrer'>{e(text)}</a>")
 
 
 def topbar(links):

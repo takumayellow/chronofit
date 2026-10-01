@@ -117,7 +117,7 @@ def progress(task, instances, settings=None, today=None):
     if hours is not None and days is not None and days > 0 and left:
         per_day = hours / days
     return {
-        "subject": subject, "kind": kind, "target": target,
+        "subject": subject, "kind": kind, "target": target, "issue": task.get("issue"),
         "priority": task.get("priority"), "due": task.get("due"),
         "goal": goal, "done": done, "left": left,
         "spent_hours": round(spent_hours(instances, subject, kind, target), 2),
