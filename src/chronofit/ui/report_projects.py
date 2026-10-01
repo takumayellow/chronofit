@@ -54,9 +54,9 @@ def _parts(work):
     return [], [], []
 
 
-def _item(name, sec, tasks=(), note=None):
+def _item(name, sec, tasks=(), note=None, tasks_head=None):
     return {"repo": name, "sec": sec, "prs": [], "issues": [], "commits": 0,
-            "tasks": list(tasks), "note": note}
+            "tasks": list(tasks), "note": note, "tasks_head": tasks_head}
 
 
 def collect(done, work, project_groups=None, default="開発"):
@@ -130,22 +130,26 @@ def _done_list(title, rows):
     return f"<div><h4>{title}</h4><ul>{items}</ul></div>"
 
 
-def _task_list(tasks):
+def _span(task):
+    first, last = _clock(task.get("first")), _clock(task.get("last"))
+    return f"（{first}–{last}）" if first or last else ""
+
+
+def _task_list(tasks, head=None):
     shown = sorted((task for task in tasks if (task.get("active_sec") or 0) >= MIN_SHOWN_SEC),
                    key=lambda task: -task["active_sec"])
     if not shown:
         return ""
     items = "".join(f"<li><span class='what'>{e(task.get('task'))}</span>"
-                    f"<span class='when'>{e(minutes(task['active_sec']))}"
-                    f"（{e(_clock(task.get('first')))}–{e(_clock(task.get('last')))}）</span></li>"
+                    f"<span class='when'>{e(minutes(task['active_sec']) + _span(task))}</span></li>"
                     for task in shown)
-    return f"<div><h4>作業（入力のあった時間）</h4><ul>{items}</ul></div>"
+    return f"<div><h4>{e(head or '作業（入力のあった時間）')}</h4><ul>{items}</ul></div>"
 
 
 def _project(item, top_sec):
     width = 0 if not top_sec else max(item["sec"] / top_sec * 100, 1 if item["sec"] else 0)
     body = (_done_list("マージした PR", item["prs"]) + _done_list("閉じた Issue", item["issues"])
-            + _task_list(item["tasks"]))
+            + _task_list(item["tasks"], item.get("tasks_head")))
     if item.get("note"):
         body = f"<p class='sub'>{e(item['note'])}</p>" + body
     if not body:
@@ -178,10 +182,13 @@ def _outing_group(outings):
     return {"name": OUTING_GROUP, "sec": sum(item["sec"] for item in items), "projects": items}
 
 
-def _phone_group(phone):
+def _phone_group(phone, apps=None):
     if not isinstance(phone, dict) or not phone:
         return None
-    items = [_item(name, sec, note="スマホを手で触っていた時間（自動プレイは除く）")
+    apps = apps if isinstance(apps, dict) else {}
+    items = [_item(name, sec, apps.get(name) or [],
+                   note="スマホを手で触っていた時間（自動プレイは除く）",
+                   tasks_head="アプリ・見ていたもの")
              for name, sec in sorted(phone.items(), key=lambda kv: -kv[1])
              if sec >= MIN_SHOWN_SEC]
     if not items:
@@ -229,10 +236,11 @@ def _group_html(group, top):
 
 
 def section(done, work, present_net_sec=0.0, project_groups=None, default="開発",
-            outings=None, phone=None):
+            outings=None, phone=None, phone_apps=None):
     """やったことの節（見出しの下）。読めなかった源は理由を1行出す。
 
-    `outings` は `activity.outings` の列、`phone` はスマホのカテゴリ → 秒。
+    `outings` は `activity.outings` の列、`phone` はスマホのカテゴリ → 秒、
+    `phone_apps` はカテゴリ → そのアプリ・見ていたものの内訳（開いたときに出す）。
     """
     notes = []
     for label, part in (("GitHub", done), ("作業の割り付け", work)):
@@ -247,7 +255,8 @@ def section(done, work, present_net_sec=0.0, project_groups=None, default="開�
     groups = collect(done, work, project_groups, default)
     unclassified = _unclassified_group(_parts(work)[2])
     pc = groups + ([unclassified] if unclassified else [])
-    others = [group for group in (_outing_group(outings), _phone_group(phone)) if group]
+    others = [group for group in (_outing_group(outings), _phone_group(phone, phone_apps))
+              if group]
     warn = "".join(f"<p class='sub warn'>{e(note)}</p>" for note in notes)
     if not (pc or others):
         return warn + "<p class='muted'>プロジェクトに割り付いた作業も、GitHub に残った成果も無い。</p>"

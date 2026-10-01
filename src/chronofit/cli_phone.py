@@ -2,14 +2,16 @@
 
     python -m chronofit phone pull     usagestats を読んで git の外へ足す（定期実行用）
     python -m chronofit phone apps     アプリごとの前面時間とカテゴリ（対応表を書くため）
+    python -m chronofit phone watch    再生中のタイトルを1分ごとに読み続ける（常駐用）
 """
+import time as clock
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from . import config, paths
 from .model import phone as phone_model
 from .model import rollup
-from .sources import phone
+from .sources import media, phone
 
 
 def _log(root, message):
@@ -39,6 +41,7 @@ def pull(settings=None):
     added = phone.append(events, root)
     phone.record_pull(root, now)
     removed = phone.purge(root, now.date(), options.get("retention_days"))
+    media.purge(root, now.date(), options.get("retention_days"))
     _log(root, f"ok events={len(events)} added={added} purged_days={removed}")
     return added
 
@@ -93,8 +96,14 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     for package in automated:
         apps.pop(package, None)
     categories = phone_model.by_category(apps, options.get("categories") or {})
+    played = phone_model.media_seconds(events, media.load(day.isoformat(), root),
+                                       start, end, until=now)
     day_usage = phone_model.clip(usage, start, end)
     phone_model.annotate(summary, sleeps, day_usage, categories, bounds=(start, end))
+    if categories:
+        # アプリ名・タイトルはページにだけ出す。rollup（共有できる形）には入れない
+        summary["phone_apps"] = phone_model.app_breakdown(
+            apps, options.get("categories") or {}, options.get("labels") or {}, played)
     if "sleep_sec" in summary:
         if bounds:
             summary["sleep_sec"] = phone_model.night_sec(last_night, usage)
@@ -133,7 +142,41 @@ def show_apps(days=7, settings=None, today=None):
     return 0
 
 
+RELOG_EVERY = 50   # 失敗が続くとき、何回ごとにログへ書くか（最大間隔で約8時間）
+
+
+def watch(settings=None, interval=60, rounds=None, sleep=clock.sleep):
+    """再生中のセッションを `interval` 秒ごとに読んで足し続ける。
+
+    端末が見えない間は間隔を広げる（最大10分）。ログには失敗に変わった時と、失敗が
+    続く間は `RELOG_EVERY` 回ごとに書く。どの失敗でも常駐は止めない。
+    `rounds` は読む回数（テスト用。None なら止まらない）。
+    """
+    options = config.phone(settings)
+    root = paths.phone_dir()
+    failures, done = 0, 0
+    while rounds is None or done < rounds:
+        done += 1
+        try:
+            text = media.fetch(options.get("adb_serials"), adb=options.get("adb") or "adb")
+            media.append(media.parse_sessions(text), datetime.now().astimezone(), root)
+        except Exception as error:  # noqa: BLE001 常駐なので、何が起きても次の回へ進む
+            failures += 1
+            if failures % RELOG_EVERY == 1:
+                reason = error if isinstance(error, RuntimeError) else type(error).__name__
+                _log(root, f"media failed x{failures} {reason}")
+        else:
+            if failures:
+                _log(root, "media ok")
+            failures = 0
+        if rounds is None or done < rounds:
+            sleep(min(interval * 2 ** min(failures, 4), 600) if failures else interval)
+    return 0
+
+
 def cmd_phone(args):
+    if args.action == "watch":
+        return watch(interval=max(args.interval, 10))
     if args.action == "pull":
         try:
             added = pull()
@@ -147,6 +190,8 @@ def cmd_phone(args):
 
 def register(sub):
     cmd = sub.add_parser("phone", help="スマホの使用状況（睡眠・アプリ別の時間）")
-    cmd.add_argument("action", nargs="?", default="apps", choices=("pull", "apps"))
+    cmd.add_argument("action", nargs="?", default="apps", choices=("pull", "apps", "watch"))
     cmd.add_argument("--days", type=int, default=7, help="apps: 直近何日を見るか（既定 7）")
+    cmd.add_argument("--interval", type=int, default=60,
+                     help="watch: 再生中のタイトルを読む間隔（秒、既定 60）")
     cmd.set_defaults(func=cmd_phone)

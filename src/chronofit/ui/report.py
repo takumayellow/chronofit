@@ -199,7 +199,8 @@ def render(summary, date_label, board_rows=None, board_summary=None, sources=Non
     projects = report_projects.section(
         extras.get("done"), extras.get("work"), summary.get("net_sec") or 0.0,
         extras.get("project_groups"), extras.get("default_group") or "開発",
-        outings=extras.get("outings"), phone=summary.get("phone_categories"))
+        outings=extras.get("outings"), phone=summary.get("phone_categories"),
+        phone_apps=summary.get("phone_apps"))
     body = [
         _header(date_label, day),
         f"<div class='stats'>{_cards(summary)}</div>",

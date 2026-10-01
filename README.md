@@ -131,6 +131,7 @@ python -m chronofit task sync                     # 開いている Issue を一
 # スマホ（無線 adb の usagestats。定期実行は chronofit-phone）
 python -m chronofit phone pull    # 直近24時間のイベントを足す
 python -m chronofit phone apps    # アプリごとの前面時間（カテゴリ対応表を書くため。画面にだけ出す）
+python -m chronofit phone watch   # 再生中の題・チャンネルを1分ごとに読む（常駐は chronofit-media）
 python -m chronofit board                       # いまどこまで来ているか
 python -m chronofit plan --until 2026-09-14     # 残りを週の容量へ割り付ける
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
