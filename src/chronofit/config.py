@@ -69,8 +69,17 @@ DEFAULTS = {
     # `sleep`: 睡眠の判定。夜の時間帯・最短の長さ等（既定は model/phone.py）。
     #   例: {"window": ["20:00", "14:00"], "min_hours": 3.0}
     # `retention_days`: イベントを持っておく日数。None は消さない。
+    # `automated`: 自動で動かしているアプリのパッケージ名。前面にいた時間を人の操作に
+    #   数えず（スマホの時間・睡眠の判定から外し）、自動プレイとして別に出す。
     "phone": {"adb": "adb", "adb_serials": [], "categories": {}, "sleep": {},
-              "retention_days": None},
+              "retention_days": None, "automated": []},
+    # 日次ページの1日の区切り（"HH:MM"）。夜中の作業を前の日に入れるため、夜明け前に置く。
+    "day_start": "05:00",
+    # 日次ページで「やったこと」をまとめる大分類 -> プロジェクト名（リポジトリ名）の型。
+    # `*` が使える。どれにも当たらないものは `default_project_group` に入る。
+    # 例: {"大学": ["lecture-*"], "仕事": ["client-site"]}
+    "project_groups": {},
+    "default_project_group": "開発",
 }
 
 

@@ -17,92 +17,13 @@
 - **数字の無いところに 0 を描かない。** slack 率が None（在席ゼロ）のとき「0%」と
   書くと「一切集中していない日」に読める。「データ無し」と書く。
 """
-import html as html_escape
-from datetime import timedelta
+from datetime import date as date_type
 
-from . import report_phone, report_work
+from . import report_phone, report_projects, report_work, style, timeline
+from .style import e as _e
+from .timeline import KIND_STYLE, MAX_ROWS, hour_rows, kind_key  # noqa: F401  （既存の呼び出し口）
 
-# 色は「席にいたか」で系統を分ける。緑＝いた、灰＝いない、青＝観ていた。
-KIND_STYLE = {
-    "present": ("#4c9a5c", "在席"),
-    "passive": ("#4a7fb5", "受動（再生中）"),
-    "away:idle": ("#b9b2a6", "無入力"),
-    "away:locked": ("#8d8b86", "ロック"),
-    "away:sleep": ("#6f6d69", "スリープ"),
-    "away:no_data": ("#d8d4cc", "記録なし"),
-}
-ACTIVE_COLOR = "#2f6b3d"
-
-
-def kind_key(segment):
-    """凡例と色を引くための鍵。離席は理由まで分ける（理由で意味が違うため）。"""
-    if segment["kind"] == "away":
-        return "away:" + (segment.get("reason") or "idle")
-    return segment["kind"]
-
-
-def _split_by_hour(segment):
-    """スパンを時刻の境界で切る。1本が2時間にまたがっても行を跨げるように。"""
-    cursor, end = segment["start"], segment["end"]
-    while cursor < end:
-        hour = cursor.replace(minute=0, second=0, microsecond=0)
-        piece_end = min(end, hour + timedelta(hours=1))
-        yield hour, cursor, piece_end
-        cursor = piece_end
-
-
-MAX_ROWS = 30
-
-
-def hour_rows(segments, max_rows=MAX_ROWS):
-    """1時間 = 1行のタイムライン。空の時間も行として残す。
-
-    空行を詰めると、`09:00` の次が `14:00` という並びになり、**間が空いていた事実**が
-    見た目から消える。1日の姿を見るのが目的なので、空白は空白のまま出す。
-
-    ただし無条件には伸ばさない。数日〜数ヶ月 PC を止めた後の復帰は1本の長い
-    `no_data` になるので、素直に埋めると数百行の表になる。`max_rows` を超えたら
-    中身のある時間だけを残し、**飛ばした時間数を行として明示する**（黙って詰めると
-    「空いていた事実」が消え、上の理由と矛盾する）。
-    """
-    pieces = [(hour, start, end, segment)
-              for segment in segments for hour, start, end in _split_by_hour(segment)]
-    if not pieces:
-        return []
-
-    filled = {}
-    for hour, start, end, segment in pieces:
-        sec = segment.get("sec") or (end - start).total_seconds()
-        active = segment.get("active_sec", 0.0) if segment["kind"] == "present" else 0.0
-        filled.setdefault(hour, []).append({
-            "left": (start - hour).total_seconds() / 36.0,      # % （3600秒 = 100%）
-            "width": max((end - start).total_seconds() / 36.0, 0.15),
-            "key": kind_key(segment),
-            # 割合が 1 を超えるのはデータの異常。描画で丸めて、形が壊れないようにする。
-            "active_ratio": min(active / sec, 1.0) if sec > 0 else 0.0,
-            "start": start, "end": end,
-            "proc": segment.get("proc", ""), "title": segment.get("title", ""),
-        })
-
-    first, last = min(filled), max(filled)
-    span_hours = int((last - first).total_seconds() // 3600) + 1
-    if span_hours <= max_rows:
-        hours = [first + timedelta(hours=n) for n in range(span_hours)]
-    else:
-        hours = sorted(filled)
-
-    rows = []
-    previous = None
-    for hour in hours:
-        skipped = 0 if previous is None else int((hour - previous).total_seconds() // 3600) - 1
-        rows.append({"hour": hour, "skipped": max(0, skipped),
-                     "pieces": sorted(filled.get(hour, []), key=lambda p: p["left"])})
-        previous = hour
-    return rows
-
-
-def _e(text):
-    return html_escape.escape(str(text or ""))
+WEEKDAYS = "月火水木金土日"
 
 
 def _hours(seconds):
@@ -113,88 +34,17 @@ def _ratio(value):
     return "データ無し" if value is None else f"{value:.0%}"
 
 
-CSS = """
-:root { color-scheme: light dark; }
-body { font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
-       margin: 0 auto; padding: 24px 20px 64px; max-width: 900px; line-height: 1.6;
-       background: #fbfaf8; color: #23211e; }
-h1 { font-size: 20px; margin: 0 0 4px; }
-h2 { font-size: 15px; margin: 32px 0 10px; padding-bottom: 4px;
-     border-bottom: 1px solid #ddd8cf; font-weight: 600; }
-.sub { color: #6d675e; font-size: 12px; margin: 0 0 20px; }
-.cards { display: flex; flex-wrap: wrap; gap: 10px; }
-.card { flex: 1 1 120px; background: #fff; border: 1px solid #e5e0d6; border-radius: 6px;
-        padding: 10px 12px; }
-.card .k { font-size: 11px; color: #6d675e; }
-.card .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.card .n { font-size: 11px; color: #8a8378; }
-.row { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
-.row .h { width: 42px; font-size: 11px; color: #8a8378; text-align: right;
-          font-variant-numeric: tabular-nums; }
-.track { position: relative; flex: 1; height: 20px; background: #efece6;
-         border-radius: 3px; overflow: hidden; }
-.track .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: #e2ded6; }
-.piece { position: absolute; top: 0; bottom: 0; }
-.piece .act { position: absolute; left: 0; right: 0; bottom: 0; background: %ACTIVE%; }
-.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11px; color: #6d675e;
-          margin-top: 8px; }
-.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 2px;
-            margin-right: 4px; vertical-align: -1px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eae6de;
-         vertical-align: top; }
-th { font-size: 11px; color: #6d675e; font-weight: 600; }
-td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-td.t { word-break: break-all; }
-.warn { color: #a4471f; }
-.muted { color: #8a8378; }
-.paths { font-size: 12px; color: #6d675e; }
-ul.done, ul.tasks { margin: 0; padding-left: 18px; }
-ul.tasks { font-size: 12px; }
-.tag { display: inline-block; min-width: 4.5em; font-size: 11px; color: #6d675e; }
-.paths code { background: #f1eee8; padding: 1px 4px; border-radius: 3px; }
-@media (prefers-color-scheme: dark) {
-  body { background: #171614; color: #e6e2db; }
-  .card, .track { background: #211f1c; border-color: #35322d; }
-  .track { background: #26241f; }
-  h2 { border-color: #35322d; }
-  .paths code { background: #26241f; }
-  th, td { border-color: #2b2825; }
-}
-""".replace("%ACTIVE%", ACTIVE_COLOR)
+def _table(inner):
+    return f"<div class='table'>{inner}</div>"
 
 
-def _timeline(summary):
-    rows = hour_rows(summary.get("segments") or [])
-    if not rows:
-        return "<p class='muted'>この日の記録が無い。</p>"
-
-    ticks = "".join(f"<div class='tick' style='left:{q * 25}%'></div>" for q in (1, 2, 3))
-    lines = []
-    for row in rows:
-        if row.get("skipped"):
-            lines.append(f"<div class='row'><div class='h'></div>"
-                         f"<div class='muted'>… {row['skipped']}時間 記録なし …</div></div>")
-        pieces = []
-        for piece in row["pieces"]:
-            color = KIND_STYLE.get(piece["key"], ("#c8c2b8", piece["key"]))[0]
-            tip = (f"{piece['start']:%H:%M}-{piece['end']:%H:%M} "
-                   f"{KIND_STYLE.get(piece['key'], ('', piece['key']))[1]}"
-                   + (f" / {piece['proc']} {piece['title']}" if piece["title"] else ""))
-            inner = ""
-            if piece["active_ratio"] > 0:
-                inner = f"<div class='act' style='height:{piece['active_ratio'] * 100:.0f}%'></div>"
-            pieces.append(
-                f"<div class='piece' style='left:{piece['left']:.3f}%;"
-                f"width:{piece['width']:.3f}%;background:{color}' title='{_e(tip)}'>{inner}</div>")
-        lines.append(f"<div class='row'><div class='h'>{row['hour']:%H:%M}</div>"
-                     f"<div class='track'>{ticks}{''.join(pieces)}</div></div>")
-
-    legend = "".join(f"<span><i style='background:{color}'></i>{_e(label)}</span>"
-                     for color, label in KIND_STYLE.values())
-    legend += (f"<span><i style='background:{ACTIVE_COLOR}'></i>"
-               "濃い部分の高さ = その帯で入力のあった割合（位置ではない）</span>")
-    return "".join(lines) + f"<div class='legend'>{legend}</div>"
+def day_title(label):
+    """`2026-10-01` → (`10月1日`, `木`)。日付でなければそのまま。"""
+    try:
+        day = date_type.fromisoformat(str(label))
+    except ValueError:
+        return str(label), ""
+    return f"{day.month}月{day.day}日", WEEKDAYS[day.weekday()]
 
 
 def _cards(summary):
@@ -205,7 +55,7 @@ def _cards(summary):
         ("受動", _hours(summary.get("passive_sec", 0.0)), "再生中（在席にも離席にも入れない）"),
         ("離席", _hours(summary["away_sec"]), "無入力・ロック・スリープ・記録なし"),
     ] + report_phone.cards(summary)
-    return "".join(f"<div class='card'><div class='k'>{_e(k)}</div>"
+    return "".join(f"<div class='stat'><div class='k'>{_e(k)}</div>"
                    f"<div class='v'>{_e(v)}</div><div class='n'>{_e(note)}</div></div>"
                    for k, v, note in items)
 
@@ -243,14 +93,14 @@ def _away_table(summary):
     note = (f"<p class='sub'>{len(blocks)}本"
             + (f" / 未ラベル {unlabeled}本（<code>chronofit label</code> で付ける）"
                if unlabeled else "") + "</p>")
-    return (note + "<table><tr><th>時刻</th><th>長さ</th><th>ラベル</th>"
-            + report_phone.away_head(summary) + "<th>場所</th></tr>"
-            + "".join(rows) + "</table>")
+    return note + _table("<table><tr><th>時刻</th><th>長さ</th><th>ラベル</th>"
+                         + report_phone.away_head(summary) + "<th>場所</th></tr>"
+                         + "".join(rows) + "</table>")
 
 
-def _title_table(summary, limit=20):
+def _title_table(summary, limit=15):
     rows = []
-    for row in (summary.get("titles") or [])[:limit]:
+    for row in summary.get("titles") or []:
         passive = row.get("passive_sec", 0.0)
         rows.append(f"<tr><td class='n'>{row['net_sec'] / 60:.0f}分</td>"
                     f"<td class='n muted'>{f'{passive / 60:.0f}分' if passive else ''}</td>"
@@ -258,8 +108,12 @@ def _title_table(summary, limit=20):
                     f"<td class='t'>{_e(row['title'])}</td></tr>")
     if not rows:
         return "<p class='muted'>前景の記録が無い。</p>"
-    return ("<table><tr><th>入力あり</th><th>受動</th><th>アプリ</th><th>タイトル</th></tr>"
-            + "".join(rows) + "</table>")
+    head = "<table><tr><th>入力あり</th><th>受動</th><th>アプリ</th><th>タイトル</th></tr>"
+    shown = _table(head + "".join(rows[:limit]) + "</table>")
+    if len(rows) <= limit:
+        return shown
+    return (shown + f"<details class='more'><summary>残り {len(rows) - limit} 件</summary>"
+            + _table(head + "".join(rows[limit:]) + "</table>") + "</details>")
 
 
 def _board_table(board_rows, board_summary, as_of=None):
@@ -291,7 +145,7 @@ def _board_table(board_rows, board_summary, as_of=None):
                    if board_summary["overdue"] else "")
                 + (f" / 見積もれない {board_summary['unestimated']}件"
                    if board_summary["unestimated"] else "") + "</p>")
-    return note + head + "".join(rows) + "</table>"
+    return note + _table(head + "".join(rows) + "</table>")
 
 
 def _paths_block(sources):
@@ -299,37 +153,69 @@ def _paths_block(sources):
         return ""
     items = "".join(f"<li><code>{_e(path)}</code> — {_e(note)}</li>"
                     for note, path in sources)
-    return f"<h2>この画面の出どころ</h2><ul class='paths'>{items}</ul>"
+    return f"<section><h2>この画面の出どころ</h2><ul class='paths'>{items}</ul></section>"
+
+
+def _section(title, inner, total=None):
+    extra = f"<span class='total'>{_e(total)}</span>" if total else ""
+    return f"<section><h2>{_e(title)}{extra}</h2>{inner}</section>"
+
+
+def _nav(day):
+    if not day:
+        return ""
+    return style.topbar([("← 前日", day.get("prev")), ("一覧", "index.html"),
+                         ("翌日 →", day.get("next"))])
+
+
+def _header(date_label, day):
+    title, weekday = day_title(date_label)
+    span = ""
+    if day and day.get("start") and day.get("end"):
+        span = (f"<div class='range'>{day['start']:%m/%d %H:%M} → "
+                f"{day['end']:%m/%d %H:%M}（{day['start']:%H:%M} で1日を区切る）</div>")
+    small = f"<small>{_e(weekday)}曜</small>" if weekday else ""
+    return f"<header class='day'><h1>{_e(title)}{small}</h1>{span}</header>"
 
 
 def render(summary, date_label, board_rows=None, board_summary=None, sources=None,
-           as_of=None, extras=None):
+           as_of=None, extras=None, day=None):
     """1日ぶんの HTML を組み立てる。文字列を返すだけで、書き出しはしない。
 
-    `extras` は `{"done": ..., "work": ..., "agenda": ...}`。上から「何が片付いたか →
-    どこで何をしたか → 予定どおりだったか → 何が残っているか」の順に読めるようにし、
+    `extras` は `{"done", "work", "agenda", "project_groups", "default_group"}`。
+    上から「何をしたか → 予定どおりだったか → 何が残っているか」の順に読めるようにし、
     時間の使い方の細部（流れ・離席・アプリ別）はその下に置く。
+    `day` は生活の1日の `{"start", "end", "prev", "next"}`（前後のページへのリンク）。
     """
     extras = extras or {}
+    day = day or {}
+    projects = report_projects.section(
+        extras.get("done"), extras.get("work"), summary.get("net_sec") or 0.0,
+        extras.get("project_groups"), extras.get("default_group") or "開発")
     body = [
-        f"<h1>{_e(date_label)}</h1>",
-        "<p class='sub'>chronofit — 測った値だけを出す。推測した値は入っていない。</p>",
-        f"<div class='cards'>{_cards(summary)}</div>",
-        "<h2>今日片付いたもの</h2>", report_work.done_section(extras.get("done")),
-        "<h2>どこで何をしたか</h2>",
-        report_work.work_section(extras.get("work"), summary.get("net_sec") or 0.0),
-        "<h2>予定と実際</h2>", report_work.agenda_section(extras.get("agenda")),
-        "<h2>残っているもの</h2>", _board_table(board_rows, board_summary, as_of),
-        "<h2>1日の流れ</h2>", _timeline(summary),
-        "<h2>離席</h2>", _away_table(summary),
-        "<h2>睡眠とスマホ</h2>", report_phone.section(summary),
-        "<h2>アプリ・タイトル別</h2>", _title_table(summary),
+        _header(date_label, day),
+        f"<div class='stats'>{_cards(summary)}</div>",
+        "<p class='sub'>測った値だけを出す。推定した値は推定と書く。</p>",
+        _section("やったこと", projects),
+        _section("予定と実際", _table_or(report_work.agenda_section(extras.get("agenda")))),
+        "<section><h2>残っているもの</h2>" + _board_table(board_rows, board_summary, as_of)
+        + "</section>",
+        _section("1日の流れ", timeline.render(summary, day.get("start"), day.get("end"))),
+        _section("離席", _away_table(summary)),
+        _section("睡眠とスマホ", _table_or(report_phone.section(summary))),
+        _section("アプリ・タイトル別", _title_table(summary)),
         _paths_block(sources),
     ]
-    return ("<!doctype html>\n<html lang='ja'><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            f"<title>chronofit {_e(date_label)}</title><style>{CSS}</style></head>"
-            f"<body>{''.join(body)}</body></html>\n")
+    title, _ = day_title(date_label)
+    return style.page(f"{title} — chronofit", "".join(body), _nav(day))
+
+
+def _table_or(html):
+    """表を含む断片なら枠に入れる（文だけのときはそのまま）。"""
+    if "<table>" not in html:
+        return html
+    head, _, rest = html.partition("<table>")
+    return head + _table("<table>" + rest)
 
 
 def write(path, content):

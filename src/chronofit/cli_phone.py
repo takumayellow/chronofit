@@ -61,19 +61,28 @@ def _pc_activity(day):
     return spans
 
 
-def annotate_summary(summary, date, settings=None):
+def annotate_summary(summary, date, settings=None, bounds=None):
     """1日の要約に、睡眠・スマホの使用・カテゴリ別の時間・起床と就寝を足す。
 
-    スマホのイベントが1つも無い日は何も足さない。
+    スマホのイベントが1つも無い日は何も足さない。`bounds` は生活の1日の区間で、
+    無ければ暦の日（0時〜翌0時）。生活の1日では、睡眠はその朝に終わった1晩を数える
+    （区切りの5時で1晩を2日に割ると、どちらの日の睡眠も実際より短く見える）。
+
+    自動で動かしているアプリ（設定の `automated`）の前面時間は人の操作に数えず、
+    `phone_auto_sec` として別に持つ。
     """
     options = config.phone(settings)
     root = paths.phone_dir()
-    events = phone.events_around(date, root)
+    events = phone.events_around(date, root, after=2 if bounds else 1)
     if not events:
         return summary
     day, start, end = _day_bounds(date)
+    if bounds:
+        start, end = bounds
     now = datetime.now().astimezone()
-    usage = phone_model.usage_intervals(events, until=now)
+    automated = options.get("automated") or []
+    usage = phone_model.human_usage(events, automated, until=now)
+    auto = phone_model.automated_intervals(events, automated, until=now)
     activity = _pc_activity(day) + usage
     covered = phone.covered_spans(root)
     sleep_settings = options.get("sleep") or {}
@@ -81,12 +90,20 @@ def annotate_summary(summary, date, settings=None):
     last_night = phone_model.detect_sleep(day, activity, covered, sleep_settings)
     sleeps = [s for s in (last_night, tonight) if s]
     apps = phone_model.app_seconds(events, start, end, until=now)
+    for package in automated:
+        apps.pop(package, None)
     categories = phone_model.by_category(apps, options.get("categories") or {})
-    phone_model.annotate(summary, sleeps,
-                         phone_model.clip(usage, start, end), categories,
-                         bounds=(start, end))
+    day_usage = phone_model.clip(usage, start, end)
+    phone_model.annotate(summary, sleeps, day_usage, categories, bounds=(start, end))
     if "sleep_sec" in summary:
+        if bounds:
+            summary["sleep_sec"] = phone_model.night_sec(last_night, usage)
         summary.update(phone_model.wake_and_bed(last_night, tonight))
+        summary["sleep_spans"] = [(s["start"], s["end"]) for s in sleeps]
+        summary["phone_spans"] = day_usage
+        summary["auto_spans"] = phone_model.clip(auto, start, end)
+        summary["phone_auto_sec"] = sum((b - a).total_seconds()
+                                        for a, b in summary["auto_spans"])
     return summary
 
 
