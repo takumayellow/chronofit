@@ -23,7 +23,7 @@ from .ui import report, site_index
 
 INDEX_DAYS = 14
 SITE_HOST = "127.0.0.1"
-SITE_PORT = 8765
+SITE_PORT = 47615      # 開発用サーバーがよく使う 8000 番台を避ける
 
 
 def logical_today(settings):
@@ -142,9 +142,15 @@ class _PageHandler(SimpleHTTPRequestHandler):
         pass
 
 
+class _ExclusiveServer(ThreadingHTTPServer):
+    # 既定の SO_REUSEADDR は Windows では使用中のポートにも重ねて bind できてしまい、
+    # 別のサーバーと同じポートで黙って取り合う。使用中なら起動に失敗させる。
+    allow_reuse_address = False
+
+
 def make_server(port=SITE_PORT, host=SITE_HOST):
     handler = functools.partial(_PageHandler, directory=str(paths.ensure(paths.report_dir())))
-    return ThreadingHTTPServer((host, port), handler)
+    return _ExclusiveServer((host, port), handler)
 
 
 def serve(args):

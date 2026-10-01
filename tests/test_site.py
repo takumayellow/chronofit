@@ -261,3 +261,13 @@ def test_ページだけを配り_フォルダの一覧は出さない(tmp_path,
         server.shutdown()
         server.server_close()
     assert server.server_address[0] == "127.0.0.1"
+
+
+def test_使用中のポートには重ねて起動しない(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "report_dir", lambda: tmp_path)
+    first = cli_site.make_server(port=0)
+    try:
+        with pytest.raises(OSError):
+            cli_site.make_server(port=first.server_address[1])
+    finally:
+        first.server_close()
