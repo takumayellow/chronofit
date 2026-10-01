@@ -141,6 +141,13 @@ def test_GitHubの検索は現地時刻の1日で切る():
         "2026-01-05T00:00:00+09:00..2026-01-05T23:59:59+09:00")
 
 
+def test_GitHubの成果はURLも持つ():
+    from chronofit.sources import github_done
+    rows = github_done._rows([{"repository": {"name": "x"}, "number": 3, "title": "t",
+                               "closedAt": "", "url": "https://github.com/someone/x/pull/3"}])
+    assert rows[0]["url"] == "https://github.com/someone/x/pull/3"
+
+
 def test_これからの予定に出る時刻と終わる時刻の目安を出す():
     event = {"title": "散髪", "start": "2026-09-29T15:00:00+09:00",
              "end": "2026-09-29T16:00:00+09:00"}

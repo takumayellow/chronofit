@@ -1,4 +1,4 @@
-"""1日の HTML のうち、睡眠とスマホの部分。
+"""1日の HTML のうち、睡眠のカードとスマホの使い道の部分。
 
 スマホのイベントがある日にだけ出す。無い日に「睡眠 0h」と書くと、寝ていない日に読める。
 アプリ名は出さず、設定の対応表で丸めたカテゴリだけを出す。
@@ -23,7 +23,7 @@ def cards(summary):
     if not has_phone(summary):
         return []
     return [
-        ("睡眠", _hours(summary["sleep_sec"]), "夜に PC もスマホも触っていない最長の区間"),
+        ("睡眠", _hours(summary["sleep_sec"]), _night(summary)),
         ("離席(睡眠除く)", _hours(summary["away_awake_sec"]), "離席から睡眠を引いた残り"),
         ("スマホ", _hours(summary["phone_sec"]),
          f"うち離席中 {_hours(summary.get('phone_away_sec', 0.0))}"),
@@ -36,12 +36,27 @@ def _clock(moment, with_date=False):
     return f"{moment:%m/%d %H:%M}" if with_date else f"{moment:%H:%M}"
 
 
+def _night(summary):
+    """睡眠カードの注。前の夜に寝た時刻 → 起きた時刻と、その日の夜に寝た時刻。"""
+    wake = summary.get("wake")
+    fell = next((a for a, b in summary.get("sleep_spans") or [] if b == wake), None)
+    if wake:
+        note = (f"{_clock(fell)} 就寝 → " if fell else "") + f"{_clock(wake)} 起床"
+    else:
+        note = "PC もスマホも触っていない夜の最長区間"
+    if summary.get("bed"):
+        note += f"（次は {_clock(summary['bed'])} 就寝）"
+    return note
+
+
 def section(summary):
-    """起床・就寝とカテゴリ別の時間。"""
+    """人が触っていたスマホの時間を、アプリの種類ごとに。"""
     if not has_phone(summary):
         return "<p class='muted'>スマホの記録が無い（<code>chronofit phone pull</code>）。</p>"
-    head = (f"<p class='sub'>起床 {_e(_clock(summary.get('wake')))}"
-            f" / 就寝 {_e(_clock(summary.get('bed'), with_date=True))}</p>")
+    auto = summary.get("phone_auto_sec") or 0.0
+    head = (f"<p class='sub'>手で触っていた {_e(_hours(summary.get('phone_sec') or 0.0))} を"
+            "アプリの種類ごとに分けた"
+            + (f"（自動プレイの {_e(_hours(auto))} は除く）" if auto else "") + "。</p>")
     categories = summary.get("phone_categories") or {}
     if not categories:
         return head + "<p class='muted'>アプリの前面化の記録が無い。</p>"

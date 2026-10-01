@@ -79,7 +79,8 @@ def test_reportに睡眠とカテゴリの表が出る(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     summary = cli._load_summary("2026-09-27")
     page = report.render(summary, "2026-09-27")
-    assert "睡眠とスマホ" in page and "離席(睡眠除く)" in page
+    assert "スマホの使い道" in page and "離席(睡眠除く)" in page
+    assert "就寝 → 07:00 起床" in page and "アプリの種類ごとに分けた" in page
     assert "連絡" in page and "com.example" not in page
     assert "<th>睡眠</th><th>スマホ</th>" in page
 

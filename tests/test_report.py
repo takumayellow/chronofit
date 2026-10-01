@@ -154,5 +154,17 @@ class Test離席と進捗:
         html = report.render(summary(), "2026-08-09", [row])
         assert "0.0h" not in html.split("<h2>残っているもの</h2>")[1]
 
+    def test_Issueから来たタスクは対象からIssueへ飛べる(self):
+        row = {"subject": "競プロ", "kind": "復習", "target": "#4 <復習>",
+               "issue": "someone/notes#4", "priority": "A", "due": None, "goal": 1,
+               "done": 0, "left": 1, "spent_hours": 0.0, "remaining_hours": None,
+               "basis": None, "days_left": None, "hours_per_day": None,
+               "state": "未着手", "overdue": False}
+        html = report.render(summary(), "2026-08-09",
+                             [row, {**row, "issue": "壊れた参照"}, {**row, "issue": "someone/..#4"}])
+        board = html.split("<h2>残っているもの</h2>")[1]
+        assert board.count("href='https://github.com/someone/notes/issues/4'") == 1
+        assert "rel='noopener noreferrer'" in board and "&lt;復習&gt;" in board
+
     def test_一覧が空でも進捗の欄は出る(self):
         assert "task add" in report.render(summary(), "2026-08-09", [])

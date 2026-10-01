@@ -45,8 +45,8 @@ def fetch(day, tz=None, bounds=None):
             errors.append(f"{kind}: {error}")
             return []
 
-    prs = search("prs", "--merged-at", window, "--json", "repository,number,title,closedAt")
-    issues = search("issues", "--closed", window, "--json", "repository,number,title,closedAt")
+    prs = search("prs", "--merged-at", window, "--json", "repository,number,title,closedAt,url")
+    issues = search("issues", "--closed", window, "--json", "repository,number,title,closedAt,url")
     commits = search("commits", "--author-date", window, "--json", "repository,sha")
     return {"prs": _rows(prs), "issues": _rows(issues), "commits": _count(commits),
             "errors": errors}
@@ -55,7 +55,7 @@ def fetch(day, tz=None, bounds=None):
 def _rows(found):
     rows = [{"repo": (row.get("repository") or {}).get("name") or "",
              "number": row.get("number"), "title": row.get("title") or "",
-             "closed": row.get("closedAt") or ""}
+             "closed": row.get("closedAt") or "", "url": row.get("url") or ""}
             for row in found if isinstance(row, dict)]
     return sorted(rows, key=lambda row: (row["repo"], row["number"] or 0))
 

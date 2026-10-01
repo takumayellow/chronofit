@@ -103,6 +103,16 @@ def test_読めなかった源は理由を出す():
     assert "作業の割り付け: 読んでいない" in html
 
 
+def test_成果はGitHubのページへ飛べ_それ以外のURLはリンクにしない():
+    done = {"prs": [{"repo": "x", "number": 1, "title": "表を直す", "closed": None,
+                     "url": "https://github.com/someone/x/pull/1"},
+                    {"repo": "x", "number": 2, "title": "危ない", "closed": None,
+                     "url": "javascript:alert(1)"}]}
+    html = report_projects.section(done, [], 0.0)
+    assert "href='https://github.com/someone/x/pull/1'" in html
+    assert "javascript:" not in html and "危ない" in html
+
+
 def test_成果のタイトルはエスケープする():
     done = {"prs": [{"repo": "x", "number": 1, "title": "<script>", "closed": None}]}
     html = report_projects.section(done, [], 0.0)

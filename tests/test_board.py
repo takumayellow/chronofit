@@ -33,6 +33,10 @@ class Test進捗の数え方:
         row = board.progress(task(), INSTANCES, SETTINGS, TODAY)
         assert (row["done"], row["goal"], row["left"]) == (2, 5, 3)
 
+    def test_元のIssueを持ち越す(self):
+        row = board.progress(task(issue="someone/notes#4"), INSTANCES, SETTINGS, TODAY)
+        assert row["issue"] == "someone/notes#4"
+
     def test_実測が無ければ未着手(self):
         row = board.progress(task(subject="応用数学A"), INSTANCES, SETTINGS, TODAY)
         assert row["state"] == board.NOT_STARTED
