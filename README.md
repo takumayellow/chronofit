@@ -238,8 +238,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 会話ログで引き、その時刻の作業ディレクトリからリポジトリを決める（会話の中身は読まない。
 置き場所は設定 `claude_dirs` で変えられる）。予定と実際は `calendar check` と同じ突き合わせ。
 
-`chronofit site`（タスク `chronofit-site` が常駐させる）はこのフォルダだけを `127.0.0.1:8765` で
-配る。スマホなど自分の端末からは `tailscale serve --bg http://127.0.0.1:8765` で tailnet の中にだけ
+`chronofit site`（タスク `chronofit-site` が常駐させる）はこのフォルダだけを `127.0.0.1:47615` で
+配る。スマホなど自分の端末からは `tailscale serve --bg http://127.0.0.1:47615` で tailnet の中にだけ
 通す。`funnel` は使わない（公開すると生タイトルが外に出る）。
 
 このリポジトリには個人固有の定数（科目名・容量・分類ルール）を一切置かない。

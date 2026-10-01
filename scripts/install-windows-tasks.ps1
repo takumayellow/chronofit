@@ -17,8 +17,8 @@
                         ならないようにする
     chronofit-refresh   今日の日次レポートを 30 分ごとに書き出し直す。位置はスマホから
                         常時届くので、予定と実際の突き合わせを翌朝まで待たせない
-    chronofit-site      書き出したページを 127.0.0.1:8765 で配る常駐。スマホからは
-                        `tailscale serve --bg http://127.0.0.1:8765` で tailnet の中にだけ通す
+    chronofit-site      書き出したページを 127.0.0.1:47615 で配る常駐。スマホからは
+                        `tailscale serve --bg http://127.0.0.1:47615` で tailnet の中にだけ通す
     chronofit-location  スマホから位置を受け取る常駐（`chronofit location setup` 済みのときだけ）
     chronofit-phone     スマホの使用状況を 30 分ごとに無線 adb で読む。端末は直近24時間しか
                         持たないので、PC が1日以上止まらなければ取りこぼさない
