@@ -316,6 +316,23 @@ def test_読む前にphone_linkで待受を保つ(monkeypatch):
     assert notes == ["reopened"] and "before-link" not in order
 
 
+def test_設定にない待受でもphone_linkが保てばそこから読む(monkeypatch):
+    monkeypatch.setattr(phone, "phone_link", FakeLink(result="host.example:5555"))
+    tried = []
+
+    def fake_adb(*args, adb="adb"):
+        if args[0] == "devices":
+            return 0, "List of devices attached\nhost.example:5555\tdevice\n"
+        if args[0] == "-s":
+            tried.append(args[1])
+        return 0, DUMP
+
+    monkeypatch.setattr(phone, "_adb", fake_adb)
+    assert phone.fetch(["old.example:41234"])[0] == "host.example:5555"
+    assert tried == ["host.example:5555"]
+    assert phone.fetch([])[0] == "host.example:5555"
+
+
 def test_直せなかった理由を失敗の文に入れる(monkeypatch):
     import pytest
     monkeypatch.setattr(phone, "phone_link", FakeLink(result=None,

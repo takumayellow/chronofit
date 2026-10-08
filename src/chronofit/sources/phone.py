@@ -222,11 +222,15 @@ def fetch(serials=None, adb="adb", notes=None):
 
     `serials` は設定に書いた候補（`host:port` なら先に `adb connect` する）。
     無ければ見えている端末のうち最初のもの。どれも読めなければ RuntimeError。
-    読む前に phone-link で待受を保つ（`notes` にしたことと理由が入る）。
+    読む前に phone-link で待受を保つ（`notes` にしたことと理由が入る）。保てた待受は、
+    `serials` に無ければ最後の候補に足す（設定がずれていても読める）。
     """
     notes = [] if notes is None else notes
-    keep_link(notes)
-    for serial in ready_serials(serials, adb):
+    linked = keep_link(notes)
+    candidates = list(serials or [])
+    if linked and linked not in candidates:
+        candidates.append(linked)
+    for serial in ready_serials(candidates, adb):
         code, out = _adb("-s", serial, "shell", "dumpsys", "usagestats", adb=adb)
         if code == 0 and _SECTION in out:
             return serial, out
