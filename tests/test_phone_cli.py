@@ -88,17 +88,36 @@ def test_reportに睡眠とカテゴリの表が出る(tmp_path, monkeypatch):
 
 def test_pullは件数だけをログに残す(tmp_path, monkeypatch):
     home = _setup(tmp_path, monkeypatch)
-    monkeypatch.setattr(phone, "fetch", lambda serials, adb="adb": ("host.example:5555", DUMP))
+    monkeypatch.setattr(phone, "fetch", lambda serials, adb="adb", **_: ("host.example:5555", DUMP))
     assert cli.main(["phone", "pull"]) == 0
     log = (home / "phone" / "pull.log").read_text(encoding="utf-8")
     assert "ok events=13 added=0" in log
     assert "host.example" not in log and "com.example" not in log
 
 
+def test_pullは開け直したこととワイヤレスデバッグを入れたことを残す(tmp_path, monkeypatch):
+    home = _setup(tmp_path, monkeypatch)
+    config_file = tmp_path / "config.json"
+    settings = json.loads(config_file.read_text(encoding="utf-8"))
+    settings["phone"]["adb_device"] = "ABC123"
+    config_file.write_text(json.dumps(settings), encoding="utf-8")
+
+    def reopened(serials, adb="adb", device=None, notes=None):
+        assert device == "ABC123"
+        notes.append("reopened")
+        return "host.example:5555", DUMP
+
+    monkeypatch.setattr(phone, "fetch", reopened)
+    monkeypatch.setattr(phone, "keep_wireless_debugging", lambda serial, adb="adb": True)
+    assert cli.main(["phone", "pull"]) == 0
+    log = (home / "phone" / "pull.log").read_text(encoding="utf-8")
+    assert "reopened wireless_debugging_on" in log and "host.example" not in log
+
+
 def test_pullが失敗したら1を返してログに残す(tmp_path, monkeypatch):
     home = _setup(tmp_path, monkeypatch)
 
-    def broken(serials, adb="adb"):
+    def broken(serials, adb="adb", **_):
         raise RuntimeError("usagestats を読める端末が無い")
 
     monkeypatch.setattr(phone, "fetch", broken)

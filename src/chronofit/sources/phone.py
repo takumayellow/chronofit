@@ -5,8 +5,8 @@
 で直近24時間ぶんを読める。PC から定期的に読みに行けば操作ゼロで貯まる。
 
 - 1回の取得は直近24時間の窓なので、同じイベントを何度も読む。足すときに重複を除く
-- 取りこぼしは「24時間以上 adb が届かなかった」ときだけ起きる（再起動で無線 adb が
-  切れた場合など）。その間は空白として残し、埋めない
+- 取りこぼしは「24時間以上 adb が届かなかった」ときだけ起きる。再起動で閉じた待受は
+  ワイヤレスデバッグ経由で開け直す（`adb_link`）。それでも届かなかった間は空白として残し、埋めない
 - 持つのは時刻・種類・パッケージ名だけ。画面のクラス名は捨てる（アプリ内のどの画面に
   いたかまでは要らない）。パッケージ名も git の外にしか置かない
 """
@@ -15,6 +15,8 @@ import re
 import subprocess
 from collections import Counter
 from datetime import date as date_type, datetime, timedelta
+
+from . import adb_link
 
 # 定期実行は窓の無い pythonw から走るので、コンソールの adb を素で起動すると
 # そのたびに窓が開く（Windows 以外では 0 で何もしない）
@@ -176,33 +178,66 @@ def connected_serials(adb="adb"):
             if len(line.split()) >= 2 and line.split()[1] == "device"]
 
 
-def ready_serials(serials=None, adb="adb"):
+def _runner(adb):
+    return lambda *args: _adb(*args, adb=adb)
+
+
+def ready_serials(serials=None, adb="adb", device=None, notes=None):
     """読みに行ける端末を候補の順に。`host:port` で見えていないものは先に `adb connect` する。
 
     候補（設定に書いたもの）が無ければ、見えている端末をそのまま返す。
+    `device`（端末のシリアル番号）があれば、閉じた待受をワイヤレスデバッグ経由で開け直す。
+    `notes` を渡すと、つながらなかった理由と開け直したことを書き足す（宛先は書かない）。
     """
+    notes = [] if notes is None else notes
     candidates = [s for s in (serials or []) if _SERIAL.fullmatch(str(s))]
     for serial in candidates:
         if ":" in serial and serial not in connected_serials(adb):
             # 端末が眠って offline のまま残った接続は、connect し直しても戻らない。
             # いったん切ってからつなぎ直す
             _adb("disconnect", serial, adb=adb)
-            _adb("connect", serial, adb=adb)
+            _, out = _adb("connect", serial, adb=adb)
+            failure = adb_link.connect_failure(out)
+            # 開け直すのは待受が閉じていたときだけ。届かないだけのときに adbd を
+            # 再起動すると、ほかの経路でつないでいる作業まで切れる
+            if failure == adb_link.REFUSED and device and adb_link.reopen_tcpip(
+                    _runner(adb), serial, device, lambda: connected_serials(adb),
+                    adb_link.local_addresses()):
+                notes.append("reopened")
+            elif failure:
+                notes.append(failure)
     visible = connected_serials(adb)
     return [s for s in candidates if s in visible] or ([] if candidates else visible)
 
 
-def fetch(serials=None, adb="adb"):
+def fetch(serials=None, adb="adb", device=None, notes=None):
     """使える端末を1台選んで `dumpsys usagestats` を読む。返り値は (端末, 出力)。
 
     `serials` は設定に書いた候補（`host:port` なら先に `adb connect` する）。
     無ければ見えている端末のうち最初のもの。どれも読めなければ RuntimeError。
     """
-    for serial in ready_serials(serials, adb):
+    notes = [] if notes is None else notes
+    for serial in ready_serials(serials, adb, device, notes):
         code, out = _adb("-s", serial, "shell", "dumpsys", "usagestats", adb=adb)
         if code == 0 and _SECTION in out:
             return serial, out
-    raise RuntimeError("usagestats を読める端末が無い（無線 adb が切れていないか確かめる）")
+    reasons = dict.fromkeys(n for n in notes if n != "reopened")      # 順を保って重複を除く
+    reason = "、".join(reasons) or "無線 adb が切れていないか確かめる"
+    raise RuntimeError(f"usagestats を読める端末が無い（{reason}）")
+
+
+def keep_wireless_debugging(serial, adb="adb"):
+    """つながった端末のワイヤレスデバッグを、家の LAN にいれば入れておく。入れ直したら True。
+
+    次に待受が閉じたとき、USB を挿さずに開け直す経路として要る。失敗しても取得は止めない。
+    """
+    if ":" not in serial:
+        return False
+    try:
+        return adb_link.enable_wireless_debugging_at_home(
+            _runner(adb), serial, adb_link.local_addresses())
+    except RuntimeError:
+        return False
 
 
 WINDOW_HOURS = 23   # 1回の取得が覆うとみなす長さ。端末の窓（24時間）より少し短く見る
