@@ -29,11 +29,16 @@ def pull(settings=None):
     options = config.phone(settings)
     root = paths.phone_dir()
     now = datetime.now().astimezone()
+    adb = options.get("adb") or "adb"
+    notes = []
     try:
-        _, text = phone.fetch(options.get("adb_serials"), adb=options.get("adb") or "adb")
+        serial, text = phone.fetch(options.get("adb_serials"), adb=adb,
+                                   device=options.get("adb_device"), notes=notes)
     except RuntimeError as error:
         _log(root, f"failed {error}")
         raise
+    if options.get("adb_device") and phone.keep_wireless_debugging(serial, adb):
+        notes.append("wireless_debugging_on")
     events = phone.parse_usagestats(text)
     if not events:
         _log(root, "failed 読めたがイベントが0件")
@@ -42,7 +47,8 @@ def pull(settings=None):
     phone.record_pull(root, now)
     removed = phone.purge(root, now.date(), options.get("retention_days"))
     media.purge(root, now.date(), options.get("retention_days"))
-    _log(root, f"ok events={len(events)} added={added} purged_days={removed}")
+    extra = "".join(f" {note}" for note in notes)
+    _log(root, f"ok events={len(events)} added={added} purged_days={removed}{extra}")
     return added
 
 
