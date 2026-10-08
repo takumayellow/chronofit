@@ -71,8 +71,8 @@ DEFAULTS = {
     # `retention_days`: イベントを持っておく日数。None は消さない。
     # `automated`: 自動で動かしているアプリのパッケージ名。前面にいた時間を人の操作に
     #   数えず（スマホの時間・睡眠の判定から外し）、自動プレイとして別に出す。
-    # adb_device: 端末のシリアル番号。あれば閉じた無線 adb の待受をワイヤレスデバッグ経由で開け直す
-    "phone": {"adb": "adb", "adb_serials": [], "adb_device": None, "categories": {}, "sleep": {},
+    # 閉じた待受の開け直しは共通の土台 phone-link（別パッケージ・別設定）が受け持つ。
+    "phone": {"adb": "adb", "adb_serials": [], "categories": {}, "sleep": {},
               "retention_days": None, "automated": []},
     # 日次ページの1日の区切り（"HH:MM"）。夜中の作業を前の日に入れるため、夜明け前に置く。
     "day_start": "05:00",

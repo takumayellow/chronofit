@@ -132,8 +132,8 @@ python -m chronofit task sync                     # 開いている Issue を一
 python -m chronofit phone pull    # 直近24時間のイベントを足す
 python -m chronofit phone apps    # アプリごとの前面時間（カテゴリ対応表を書くため。画面にだけ出す）
 python -m chronofit phone watch   # 再生中の題・チャンネルを1分ごとに読む（常駐は chronofit-media）
-# 設定 phone.adb_device（端末のシリアル番号）を置くと、再起動で閉じた無線 adb を
-# ペア済みのワイヤレスデバッグ経由で自動で開け直す（USB 不要。docs/DESIGN.md L0）
+# 再起動で閉じた無線 adb は、共通の土台 phone-link（別リポジトリ）が入っていれば
+# 読む前と5分ごとに開け直される（USB 不要。docs/DESIGN.md L0）。入っていなければ adb connect だけ
 python -m chronofit board                       # いまどこまで来ているか
 python -m chronofit plan --until 2026-09-14     # 残りを週の容量へ割り付ける
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
