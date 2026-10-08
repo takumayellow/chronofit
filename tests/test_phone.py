@@ -274,6 +274,64 @@ def test_offlineの無線接続は切ってからつなぎ直す(monkeypatch):
     assert calls.index("disconnect") < calls.index("connect")
 
 
+class FakeLink:
+    """phone-link の代わり。ensure に渡された notes へ書き足す。"""
+
+    def __init__(self, configured=True, result="host.example:5555", notes=(), error=None):
+        self._configured, self.result, self.notes, self.error = configured, result, notes, error
+        self.calls = 0
+
+    def configured(self):
+        return self._configured
+
+    def ensure(self, notes):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        notes.extend(self.notes)
+        return self.result
+
+
+def test_phone_linkが無い_未設定なら何もしない(monkeypatch):
+    assert phone.keep_link([]) is None
+    link = FakeLink(configured=False)
+    monkeypatch.setattr(phone, "phone_link", link)
+    assert phone.keep_link([]) is None and link.calls == 0
+
+
+def test_読む前にphone_linkで待受を保つ(monkeypatch):
+    order = []
+    link = FakeLink(notes=["reopened"])
+    monkeypatch.setattr(phone, "phone_link", link)
+
+    def fake_adb(*args, adb="adb"):
+        order.append(args[0] if link.calls else "before-link")
+        if args[0] == "devices":
+            return 0, "List of devices attached\nhost.example:5555\tdevice\n"
+        return 0, DUMP
+
+    monkeypatch.setattr(phone, "_adb", fake_adb)
+    notes = []
+    assert phone.fetch(["host.example:5555"], notes=notes)[0] == "host.example:5555"
+    assert notes == ["reopened"] and "before-link" not in order
+
+
+def test_直せなかった理由を失敗の文に入れる(monkeypatch):
+    import pytest
+    monkeypatch.setattr(phone, "phone_link", FakeLink(result=None,
+                                                      notes=["reopened", "端末に届かない"]))
+    monkeypatch.setattr(phone, "_adb", lambda *args, adb="adb": (0, "List of devices attached\n"))
+    with pytest.raises(RuntimeError, match="（端末に届かない）"):
+        phone.fetch(["host.example:5555"])
+
+
+def test_phone_linkがadbを起動できなくても取得は続ける(monkeypatch):
+    monkeypatch.setattr(phone, "phone_link", FakeLink(error=RuntimeError("adb を実行できなかった")))
+    notes = []
+    assert phone.keep_link(notes) is None
+    assert notes == ["adb を実行できなかった"]
+
+
 def test_日の範囲を渡すと在席と判定された夜中も睡眠に数える():
     summary = _summary()
     summary["segments"][0]["end"] = at(4)          # 4時〜9時は PC が無入力の在席

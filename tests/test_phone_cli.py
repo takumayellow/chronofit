@@ -95,23 +95,18 @@ def test_pullは件数だけをログに残す(tmp_path, monkeypatch):
     assert "host.example" not in log and "com.example" not in log
 
 
-def test_pullは開け直したこととワイヤレスデバッグを入れたことを残す(tmp_path, monkeypatch):
+def test_pullはphone_linkのしたことだけを残す(tmp_path, monkeypatch):
     home = _setup(tmp_path, monkeypatch)
-    config_file = tmp_path / "config.json"
-    settings = json.loads(config_file.read_text(encoding="utf-8"))
-    settings["phone"]["adb_device"] = "ABC123"
-    config_file.write_text(json.dumps(settings), encoding="utf-8")
 
-    def reopened(serials, adb="adb", device=None, notes=None):
-        assert device == "ABC123"
-        notes.append("reopened")
+    def reopened(serials, adb="adb", notes=None):
+        notes += ["reopened", "待受が閉じている", "wireless_debugging_on", "reopened"]
         return "host.example:5555", DUMP
 
     monkeypatch.setattr(phone, "fetch", reopened)
-    monkeypatch.setattr(phone, "keep_wireless_debugging", lambda serial, adb="adb": True)
     assert cli.main(["phone", "pull"]) == 0
     log = (home / "phone" / "pull.log").read_text(encoding="utf-8")
-    assert "reopened wireless_debugging_on" in log and "host.example" not in log
+    assert log.rstrip().endswith("purged_days=0 reopened wireless_debugging_on")
+    assert "host.example" not in log
 
 
 def test_pullが失敗したら1を返してログに残す(tmp_path, monkeypatch):
