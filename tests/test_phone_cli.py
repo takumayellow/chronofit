@@ -154,3 +154,14 @@ def test_自動プレイの時間は別に持ち_スマホの時間に入れな�
     assert summary["phone_auto_sec"] == 30 * 60 - 3
     assert summary["phone_sec"] == 10 * 60 + 3
     assert "com.example.video" not in str(summary["phone_categories"])
+
+
+def test_点けたまま置くアプリは使用に入れず_自動プレイにも出さない(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    (tmp_path / "config.json").write_text(json.dumps(
+        {"phone": {"categories": {"com.example.chat": "連絡"},
+                   "ignored": ["com.example.video"]}}), encoding="utf-8")
+    summary = cli._load_summary("2026-09-26", bounds=_logical("2026-09-26"))
+    assert summary["phone_auto_sec"] == 0
+    assert summary["phone_sec"] == 10 * 60 + 3
+    assert "com.example.video" not in str(summary["phone_categories"])
