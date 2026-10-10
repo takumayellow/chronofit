@@ -76,7 +76,8 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     （区切りの5時で1晩を2日に割ると、どちらの日の睡眠も実際より短く見える）。
 
     自動で動かしているアプリ（設定の `automated`）の前面時間は人の操作に数えず、
-    `phone_auto_sec` として別に持つ。
+    `phone_auto_sec` として別に持つ。画面を点けたまま置いておくアプリ（設定の `ignored`）の
+    前面時間は人の操作に数えず、どこにも出さない。
     """
     options = config.phone(settings)
     root = paths.phone_dir()
@@ -87,8 +88,9 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     if bounds:
         start, end = bounds
     now = datetime.now().astimezone()
-    automated = options.get("automated") or []
-    usage = phone_model.human_usage(events, automated, until=now)
+    automated = _packages(options.get("automated"))
+    not_human = automated + _packages(options.get("ignored"))
+    usage = phone_model.human_usage(events, not_human, until=now)
     auto = phone_model.automated_intervals(events, automated, until=now)
     activity = _pc_activity(day) + usage
     covered = phone.covered_spans(root)
@@ -97,7 +99,7 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     last_night = phone_model.detect_sleep(day, activity, covered, sleep_settings)
     sleeps = [s for s in (last_night, tonight) if s]
     apps = phone_model.app_seconds(events, start, end, until=now)
-    for package in automated:
+    for package in not_human:
         apps.pop(package, None)
     categories = phone_model.by_category(apps, options.get("categories") or {})
     played = phone_model.media_seconds(events, media.load(day.isoformat(), root),
@@ -118,6 +120,13 @@ def annotate_summary(summary, date, settings=None, bounds=None):
         summary["phone_auto_sec"] = sum((b - a).total_seconds()
                                         for a, b in summary["auto_spans"])
     return summary
+
+
+def _packages(value):
+    """設定のパッケージ名の列。1つだけ文字列で書かれていても列として読む。"""
+    if isinstance(value, str):
+        return [value]
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
 def show_apps(days=7, settings=None, today=None):
