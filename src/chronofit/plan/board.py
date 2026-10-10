@@ -21,7 +21,7 @@
 """
 from datetime import date as date_type
 
-from ..estimate import curve, kinds
+from ..estimate import curve, kinds, report_actuals
 
 NOT_STARTED = "未着手"
 IN_PROGRESS = "進行中"
@@ -60,8 +60,31 @@ def spent_hours(instances, subject, kind, target=None):
                and (target is None or row.get("target") == target))
 
 
-def _remaining_estimate(instances, subject, kind, left, settings, assumed=None):
+def with_progress(tasks, in_progress):
+    """作業中の回に使った時間を `progress_hours` として写した一覧（元の一覧は変えない）。
+
+    `in_progress` は `{(科目, 種別, 回): 時間}`（`chronofit reports record` が残す）。
+    回を名指ししたタスク（target あり）だけに付く。
+    """
+    result = []
+    for task in tasks:
+        spent = in_progress.get((task.get("subject"), task.get("kind"), task.get("target")))
+        result.append({**task, "progress_hours": spent} if spent else task)
+    return result
+
+
+def first_unit_hours(estimate_hours, progress_hours):
+    """これから手を付ける1本目の見積もり。作業中なら使ったぶんを引く。"""
+    if estimate_hours is None or not progress_hours:
+        return estimate_hours
+    return report_actuals.remaining_hours(estimate_hours, progress_hours)
+
+
+def _remaining_estimate(instances, subject, kind, left, settings, assumed=None,
+                        progress_hours=None):
     """残り `left` 本ぶんの合計見積もり。1本ずつ見積もって足す。
+
+    1本目が作業中なら（`progress_hours`）、その本は使ったぶんを引いて数える。
 
     見積もれない本が混ざったら、合計を出さずに **None** を返す。足せるものだけ
     足して「残り4時間」と言うと、見積もれない本を 0 時間として計画に混ぜることになる。
@@ -82,7 +105,7 @@ def _remaining_estimate(instances, subject, kind, left, settings, assumed=None):
             estimate = curve.estimate(instances, subject, kind, start + offset, assumed)
         if estimate.get("hours") is None:
             return None, estimate.get("basis")
-        total += estimate["hours"]
+        total += first_unit_hours(estimate["hours"], progress_hours) if offset == 0             else estimate["hours"]
         basis = basis or estimate.get("basis")
     return total, basis
 
@@ -110,8 +133,9 @@ def progress(task, instances, settings=None, today=None):
     goal = goal_count(task)
     done = done_count(instances, subject, kind, target)
     left = max(0, goal - done)
+    working = task.get("progress_hours") or 0.0
     hours, basis = _remaining_estimate(instances, subject, kind, left, settings,
-                                       task.get("assumed_hours"))
+                                       task.get("assumed_hours"), working)
     days = _days_left(task.get("due"), today)
     per_day = None
     if hours is not None and days is not None and days > 0 and left:
@@ -120,12 +144,14 @@ def progress(task, instances, settings=None, today=None):
         "subject": subject, "kind": kind, "target": target, "issue": task.get("issue"),
         "priority": task.get("priority"), "due": task.get("due"),
         "goal": goal, "done": done, "left": left,
-        "spent_hours": round(spent_hours(instances, subject, kind, target), 2),
+        "spent_hours": round(spent_hours(instances, subject, kind, target)
+                             + (working if left else 0.0), 2),
         "remaining_hours": None if hours is None else round(hours, 2),
         "basis": basis,
         "days_left": days,
         "hours_per_day": None if per_day is None else round(per_day, 2),
-        "state": DONE if not left else (NOT_STARTED if not done else IN_PROGRESS),
+        "state": DONE if not left else (NOT_STARTED if not (done or working)
+                                        else IN_PROGRESS),
         "overdue": bool(left and days is not None and days < 0),
     }
 

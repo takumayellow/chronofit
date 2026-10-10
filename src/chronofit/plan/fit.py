@@ -18,6 +18,7 @@
 from datetime import date, timedelta
 
 from ..estimate import curve, kinds, slack
+from . import board
 
 
 def days_between(start, end):
@@ -95,10 +96,13 @@ def expand(tasks, instances, settings=None):
             else:
                 estimate = curve.estimate(instances, subject, kind, index,
                                           task.get("assumed_hours"))
+            hours = estimate.get("hours")
+            if offset == 0:
+                hours = board.first_unit_hours(hours, task.get("progress_hours"))
             items.append({"subject": subject, "kind": kind, "mode": mode,
                           "target": task.get("target"), "index": index,
                           "start": task.get("start"), "due": task.get("due"),
-                          "hours": estimate.get("hours"),
+                          "hours": hours,
                           "basis": estimate.get("basis"),
                           "note": estimate.get("note")})
     return items
