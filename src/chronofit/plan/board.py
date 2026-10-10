@@ -137,9 +137,14 @@ def progress(task, instances, settings=None, today=None):
     hours, basis = _remaining_estimate(instances, subject, kind, left, settings,
                                        task.get("assumed_hours"), working)
     days = _days_left(task.get("due"), today)
+    # 手を付けられる日（start）が先なら、そこから締切までで割る。今日から割ると
+    # まだ書けない回の1日あたりが薄まって、今週の重さが見えなくなる。
+    usable = days
+    if days is not None and (wait := _days_left(task.get("start"), today)) and wait > 0:
+        usable = days - wait
     per_day = None
-    if hours is not None and days is not None and days > 0 and left:
-        per_day = hours / days
+    if hours is not None and usable is not None and usable > 0 and left:
+        per_day = hours / usable
     return {
         "subject": subject, "kind": kind, "target": target, "issue": task.get("issue"),
         "priority": task.get("priority"), "due": task.get("due"),

@@ -107,6 +107,17 @@ def test_通しで計画にすると需要と供給が並ぶ():
     assert len(plan["weeks"]) == 1
 
 
+def test_期間より後に始まる本は入りきらないに混ぜず需要にも数えない():
+    task = {"subject": "応用数学B", "kind": "過去問", "count": 1}
+    plan = fit.make([task, {**task, "target": "期末", "start": "2026-09-01"}],
+                    INSTANCES, {"平日": 8.0}, date(2026, 8, 16), SETTINGS, RATIOS,
+                    today=date(2026, 8, 10))
+    assert [item["target"] for item in plan["later"]] == ["期末"]
+    assert plan["overflow"] == []
+    assert plan["demand"] == sum(item["hours"] for week in plan["placed"]
+                                 for item in week["items"])
+
+
 def test_同じ科目と種別の2つ目のタスクは通し番号を続ける():
     # 中間ぶんの過去問のあとに期末ぶんを置くとき、期末の1本目は通算で次の本
     items = fit.expand([{"subject": "応用数学B", "kind": "過去問", "count": 2, "target": "中間"},

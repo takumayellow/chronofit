@@ -600,9 +600,14 @@ def cmd_plan(args):
         print("\n入りきらなかったもの:")
         for item in result["overflow"]:
             hours = f"{item['hours']:.1f}h" if item["hours"] is not None else "見積もり無し"
-            print(f"  {hours}  {item['subject']} {item['kind']}"
+            target = f" {item['target']}" if item.get("target") else ""
+            print(f"  {hours}  {item['subject']} {item['kind']}{target}"
                   f"（{item['index']}本目）— {item['reason']}")
         print("  → 減らすか、締切を動かすか、1日の持ち時間を増やすかを決める")
+    if result["later"]:
+        hours = sum(item["hours"] or 0.0 for item in result["later"])
+        print(f"\n{args.until} より後に始まるもの {len(result['later'])}本"
+              f"（{hours:.0f}h）は数えていない")
     return 0
 
 

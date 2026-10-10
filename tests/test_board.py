@@ -114,6 +114,12 @@ class Test締切:
         assert row["days_left"] == 10
         assert row["hours_per_day"] == pytest.approx(row["remaining_hours"] / 10, abs=0.01)
 
+    def test_手を付けられる日が先なら_そこから締切までで割る(self):
+        row = board.progress(task(start="2026-08-15", due="2026-08-19"), INSTANCES, SETTINGS,
+                             TODAY)
+        assert row["days_left"] == 10
+        assert row["hours_per_day"] == pytest.approx(row["remaining_hours"] / 4, abs=0.01)
+
     def test_締切が無ければ日あたりも出さない(self):
         row = board.progress(task(), INSTANCES, SETTINGS, TODAY)
         assert row["days_left"] is None and row["hours_per_day"] is None
