@@ -103,13 +103,32 @@ class Test集計:
         engaged = [(at(1), at(2)), (at(4.5), at(5))]
         tallied = ra.tally(window_list, spans, engaged, series)
         first = tallied["課題1-1"]
-        assert first["work"] == {"pc": 0.5, "claude": 1.0, "net": 1.0}
-        assert first["after"] == {"pc": 0.5, "claude": 0.0, "net": 0.5}
+        assert first["work"] == {"pc": 0.5, "claude": 1.0, "alone": 0.0, "net": 1.0}
+        assert first["after"] == {"pc": 0.5, "claude": 0.0, "alone": 0.0, "net": 0.5}
         assert first["done"] == at(3)
         assert first["prs"] == [1, 2]
         second = tallied["課題1-2"]
-        assert second["work"] == {"pc": 0.25, "claude": 0.5, "net": 0.75}
+        assert second["work"] == {"pc": 0.25, "claude": 0.5, "alone": 0.0, "net": 0.75}
         assert ra.open_units(tallied) == {"課題1-2": 0.75}
+
+    def test_席を外している間のClaudeは所要時間に入れず単独として出す(self, series):
+        prs = [pr(1, 4, "unit1/01: 下書き")]
+        window_list = ra.windows(prs, series, at(0), at(4))
+        spans = [(at(1), 900, "エディタ")]                    # 1:00-1:15 に入力
+        engaged = [(at(1), at(3))]                             # Claude は 1:00-3:00
+        present = ra.presence([(at(1), 900), (at(2.5), 0)], pad=timedelta(minutes=15))
+        work = ra.tally(window_list, spans, engaged, series, present)["課題1-1"]["work"]
+        assert work == {"pc": 0.25, "claude": 0.5, "alone": 1.5, "net": 0.5}
+
+    def test_在席はどのアプリの入力でも作り_切れ目を余白で埋める(self):
+        pad = timedelta(minutes=2)
+        assert ra.presence([(at(0), 60), (at(0.05), 60), (at(1), 0)], pad=pad) == [
+            (at(0), at(0.05) + timedelta(seconds=60) + pad)]
+
+    def test_共通部分は区間を跨いでも重複しない(self):
+        present = [(at(0), at(1)), (at(2), at(3))]
+        assert ra._intersect([(at(0.5), at(2.5)), (at(2.6), at(4))], present) == [
+            (at(0.5), at(1)), (at(2), at(2.5)), (at(2.6), at(3))]
 
     def test_ごく短い回は作業中に出さない(self):
         tallied = {"課題1-3": {"work": {"net": 0.01}, "done": None}}
