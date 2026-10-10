@@ -160,7 +160,7 @@ def test_点けたまま置くアプリは使用に入れず_自動プレイに�
     _setup(tmp_path, monkeypatch)
     (tmp_path / "config.json").write_text(json.dumps(
         {"phone": {"categories": {"com.example.chat": "連絡"},
-                   "ignored": ["com.example.video"]}}), encoding="utf-8")
+                   "ignored": "com.example.video"}}), encoding="utf-8")   # 1つなら文字列でも
     summary = cli._load_summary("2026-09-26", bounds=_logical("2026-09-26"))
     assert summary["phone_auto_sec"] == 0
     assert summary["phone_sec"] == 10 * 60 + 3

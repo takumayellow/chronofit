@@ -88,8 +88,8 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     if bounds:
         start, end = bounds
     now = datetime.now().astimezone()
-    automated = options.get("automated") or []
-    not_human = automated + (options.get("ignored") or [])
+    automated = _packages(options.get("automated"))
+    not_human = automated + _packages(options.get("ignored"))
     usage = phone_model.human_usage(events, not_human, until=now)
     auto = phone_model.automated_intervals(events, automated, until=now)
     activity = _pc_activity(day) + usage
@@ -120,6 +120,13 @@ def annotate_summary(summary, date, settings=None, bounds=None):
         summary["phone_auto_sec"] = sum((b - a).total_seconds()
                                         for a, b in summary["auto_spans"])
     return summary
+
+
+def _packages(value):
+    """設定のパッケージ名の列。1つだけ文字列で書かれていても列として読む。"""
+    if isinstance(value, str):
+        return [value]
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
 def show_apps(days=7, settings=None, today=None):
