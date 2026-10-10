@@ -58,7 +58,11 @@ def measure(series_list, settings, since_day=None, archives=None, now=None):
     sessions = cli_prs.read_sessions(settings, since, archives)
     engaged = cli_prs.engaged_by_repo(settings, since, archives, sessions)
     browse_rules = (settings.get("title_rules") or []) + (settings.get("url_rules") or [])
-    decided = activity.decisions(_spans(since_day, now.date()), claude_sessions.index(sessions),
+    raw = _spans(since_day, now.date())
+    present = report_actuals.presence(
+        [(datetime.fromisoformat(span["start"]).astimezone(), float(span.get("active_sec") or 0))
+         for span in raw])
+    decided = activity.decisions(raw, claude_sessions.index(sessions),
                                  claude_sessions.cwds_near,
                                  visits=report_extras._visits(since),
                                  rules=settings.get("activity_rules") or [],
@@ -71,7 +75,8 @@ def measure(series_list, settings, since_day=None, archives=None, now=None):
                    for span, (project, *_rest) in decided
                    if report_actuals.counts(span, project, series)]
         tallied = report_actuals.tally(report_actuals.windows(prs, series, since, now),
-                                       counted, engaged.get(series["repo"], []), series)
+                                       counted, engaged.get(series["repo"], []), series,
+                                       present)
         result.append((series, tallied))
     return result
 
@@ -144,7 +149,8 @@ def _row(label, entry, state=None):
     if state is None:
         state = f"完了 {entry['done'].astimezone():%m/%d}" if entry["done"] else "作業中"
     return (f"{_pad(label, 20)}{_fmt(work.get('net'), 'h')}  PC{_fmt(work.get('pc'))}  "
-            f"Claude{_fmt(work.get('claude'))}  {_fmt(after and after['net'], 'h')}  {state}")
+            f"Claude{_fmt(work.get('claude'))}  {_fmt(after and after['net'], 'h')}  "
+            f"{_fmt(work.get('alone'), 'h')}  {state}")
 
 
 def forecast(instances, series, unit, spent):
@@ -167,7 +173,7 @@ def show(since_day=None, archives=None):
     instances = estimate_db.load(estimate_db.default_path(paths.data_root()))
     for series, tallied in measure(series_list, settings, since_day, archives):
         print(f"{series['subject']} {series['kind']}（{series['repo']}）")
-        print(f"{_pad('回', 20)} 所要   内訳（PC / Claude）       提出後  状態")
+        print(f"{_pad('回', 20)} 所要   内訳（PC / Claude）       提出後  Claude単独  状態")
         shown = set(report_actuals.open_units(tallied)) | {
             unit for unit, entry in tallied.items() if entry["done"]}
         units = sorted((unit for unit in tallied if unit in shown),

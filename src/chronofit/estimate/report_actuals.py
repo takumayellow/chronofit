@@ -11,6 +11,9 @@
   完了の後にその回の印が付いた PR は「提出後」の手直しで、1本を仕上げる時間には入れない
 - 数える時間は2つ。PC の入力（スパン）と、そのリポジトリで Claude が動いていた区間
   （`pr_actuals.engaged`）。所要時間は両方の和集合（同時に動いていたぶんは1回だけ数える）
+- Claude の区間は、本人が PC にいた間（どのアプリでも入力があったスパンに `PRESENCE_PAD`
+  を足した区間）だけを数える。席を外している間に Claude が1人で進めたぶんは「Claude単独」
+  として別に出し、所要時間には入れない（手を動かした時間で見積もるため）
 - スパンは、割り付け（`activity.decisions`）がそのリポジトリにしたもの、または
   タイトルが `title_patterns`・回の印に当たるもの（提出 PDF・LETUS の科目ページなど）を数える。
   タイトルに回の印があれば、窓よりそちらを優先する
@@ -22,6 +25,9 @@ SOURCE = "report-series"
 MODE = "oneoff"
 WORK, AFTER = "work", "after"
 COMMON = None   # 回の印が無い窓
+# 最後の入力からこの秒数までは席にいたとみなす。収集側が既に 60 秒未満のアイドルを
+# 入力中に含めているので、その先の、Claude の出力を読んでいる間のぶん
+PRESENCE_PAD = timedelta(seconds=120)
 REQUIRED = ("subject", "kind", "repo", "unit_patterns", "target", "done_pattern")
 
 
@@ -143,13 +149,35 @@ def _clip(intervals, start, end):
     return [(max(a, start), min(b, end)) for a, b in intervals if a < end and b > start]
 
 
-def tally(windows_and_done, spans, engaged, series):
+def presence(inputs, pad=PRESENCE_PAD):
+    """本人が PC にいた区間。`inputs` は `[(開始, 入力秒)]`（どのアプリでも）。"""
+    return _merge([(start, start + timedelta(seconds=seconds) + pad)
+                   for start, seconds in inputs if seconds > 0])
+
+
+def _intersect(intervals, present):
+    """どちらも畳んである区間の列どうしの共通部分。"""
+    result, index = [], 0
+    for start, end in intervals:
+        while index < len(present) and present[index][1] <= start:
+            index += 1
+        probe = index
+        while probe < len(present) and present[probe][0] < end:
+            result.append((max(start, present[probe][0]), min(end, present[probe][1])))
+            probe += 1
+    return result
+
+
+def tally(windows_and_done, spans, engaged, series, present=None):
     """回ごとの時間。
 
     `spans` は `[(開始, 入力秒, タイトル)]`（数えると決めたスパンだけ。時刻は aware）。
     `engaged` はそのリポジトリで Claude が動いていた区間の列。
+    `present` は本人が PC にいた区間（`presence`）。None なら Claude の区間を全部数える。
     返り値は `{回: {"work": 時間, "after": 時間, "done", "first", "last", "days", "prs"}}`。
-    時間は `{"pc", "claude", "net"}`（h）。回の印の無いぶんは鍵 None（共通）。
+    時間は `{"pc", "claude", "alone", "net"}`（h）。claude は本人がいた間の Claude、
+    alone は本人がいない間に Claude だけが動いていたぶん（net に入れない）。
+    回の印の無いぶんは鍵 None（共通）。
     """
     window_list, done = windows_and_done
     pieces = {}   # (回, phase) → {"pc": 秒, "claude": [区間], "spans": [区間]}
@@ -176,11 +204,14 @@ def tally(windows_and_done, spans, engaged, series):
 
     result = {}
     for (unit, phase), piece in pieces.items():
-        claude, both = _merge(piece["claude"]), _merge(piece["claude"] + piece["spans"])
+        engaged_here = _merge(piece["claude"])
+        claude = engaged_here if present is None else _intersect(engaged_here, present)
+        both = _merge(claude + piece["spans"])
         entry = result.setdefault(unit, {"work": None, "after": None, "done": done.get(unit),
                                          "first": None, "last": None, "days": set(),
                                          "prs": []})
         entry[phase] = {"pc": round(piece["pc"] / 3600, 2), "claude": round(_hours(claude), 2),
+                        "alone": round(_hours(engaged_here) - _hours(claude), 2),
                         "net": round(_hours(both), 2)}
         if both:
             entry["first"] = min(filter(None, (entry["first"], both[0][0])))

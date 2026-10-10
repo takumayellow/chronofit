@@ -191,6 +191,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
   作業かを決める。`done_pattern` に当たる PR で、その回を完了とする。
 - 時間は PC の入力（そのリポジトリに割り付いたスパンと、`title_patterns`・`span_patterns`・
   回の印に当たるスパン）と、そのリポジトリで Claude が動いていた区間の和集合。
+- Claude の区間は、本人が PC にいた間（どのアプリでも入力があってから2分まで）だけを
+  数える。席を外している間に Claude が1人で進めたぶんは「Claude単独」として別に出し、
+  所要時間には入れない。
 - 完了の後のその回の手直しは「提出後」として別に出し、1本の所要時間には入れない。
   回の印の無い作業（雛形・解説サイトなど）は「共通」として別に出す。
 - `reports record`（`daily` から毎晩）が完了した回を DB へ入れ（`source = report-series`）、
