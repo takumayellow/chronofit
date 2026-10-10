@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from . import work
-from ..sources import history
+from ..sources import claude_sessions, history
 
 CLAUDE_WINDOW_SEC = 900        # 多数決は、この前後に記録のある会話から決める
 CLAUDE_FALLBACK_SEC = 1800
@@ -123,6 +123,7 @@ class _Resolver:
                 if id(session) not in seen:
                     seen.add(id(session))
                     self.all_sessions.append(session)
+        self.all_marks = claude_sessions.MarkIndex(self.all_sessions)
         self.keys = [self._project_key(span) for span in spans]
         self.windows = {}         # tmux の窓 → [(開始, (リポジトリ, 作業))]
         for span, key in zip(spans, self.keys):
@@ -137,9 +138,9 @@ class _Resolver:
     def _vote(self, span):
         if not self.all_sessions:
             return None
-        cwds = self.cwds_near(self.all_sessions, datetime.fromisoformat(span["start"]),
-                              window_sec=CLAUDE_WINDOW_SEC,
-                              fallback_max_sec=CLAUDE_FALLBACK_SEC)
+        cwds = self.all_marks.near(datetime.fromisoformat(span["start"]),
+                                   window_sec=CLAUDE_WINDOW_SEC,
+                                   fallback_max_sec=CLAUDE_FALLBACK_SEC)
         return work.vote(cwds, self.repo_of, self.repo_cache)
 
     def _same_window(self, span):
