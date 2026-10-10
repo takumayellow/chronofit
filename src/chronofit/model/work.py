@@ -37,22 +37,34 @@ def github_repo(title):
 def repo_name(cwd):
     """作業ディレクトリを含む git リポジトリの名前と、git の中だったか。
 
-    worktree は `.git` がファイルで、元のリポジトリの `.git/worktrees/<名前>` を指すので、
-    元のリポジトリの名前に揃える。
+    名前は origin の URL の末尾（GitHub のリポジトリ名）。origin が無ければフォルダ名。
+    worktree・submodule は `.git` がファイルで別の場所の git ディレクトリを指すので、
+    そちらの設定を読んで元のリポジトリの名前に揃える。
     """
     if not cwd:
         return UNKNOWN_REPO, False
-    path = Path(cwd)
+    found = repo_root(cwd)
+    if found:
+        return found[0], True
+    return Path(cwd).name or UNKNOWN_REPO, False
+
+
+def repo_root(path):
+    """`path` を含む git リポジトリの `(名前, 置き場所)`。git の外なら None。"""
+    path = Path(path)
     for candidate in (path, *path.parents):
         marker = candidate / ".git"
         if marker.is_dir():
-            return candidate.name, True
+            return _origin_name(marker) or candidate.name, candidate
         if marker.is_file():
-            return _worktree_origin(marker) or candidate.name, True
-    return path.name or UNKNOWN_REPO, False
+            gitdir = _linked_gitdir(marker)
+            name = (_origin_name(_common_dir(gitdir)) or _worktree_folder(gitdir)
+                    if gitdir else None)
+            return name or candidate.name, candidate
+    return None
 
 
-def _worktree_origin(marker):
+def _linked_gitdir(marker):
     try:
         text = marker.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
@@ -60,7 +72,37 @@ def _worktree_origin(marker):
     if not text.startswith("gitdir:"):
         return None
     gitdir = Path(text.removeprefix("gitdir:").strip())
+    return gitdir if gitdir.is_absolute() else marker.parent / gitdir
+
+
+def _common_dir(gitdir):
+    """worktree の git ディレクトリは `commondir` で元の git ディレクトリを指す。"""
+    try:
+        common = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return gitdir
+    common = Path(common)
+    return common if common.is_absolute() else gitdir / common
+
+
+def _worktree_folder(gitdir):
     return gitdir.parents[2].name if gitdir.parent.name == "worktrees" else None
+
+
+_ORIGIN_URL = re.compile(r'\[remote "origin"\][^\[]*?^\s*url\s*=\s*(\S+)', re.M | re.S)
+
+
+def _origin_name(gitdir):
+    """git ディレクトリの設定にある origin の URL の末尾。読めなければ None。"""
+    try:
+        text = (gitdir / "config").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _ORIGIN_URL.search(text)
+    if not match:
+        return None
+    name = match.group(1).rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    return name.removesuffix(".git") or None
 
 
 def attribute(spans, sessions, cwds_near, repo_of=repo_name):
