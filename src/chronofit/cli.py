@@ -33,7 +33,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_claude, cli_outing, cli_phone, cli_prs, cli_site, config, paths
+from . import (cli_claude, cli_outing, cli_phone, cli_prs, cli_reports, cli_site, config,
+               paths)
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -990,6 +991,7 @@ def build_parser():
     loc.set_defaults(func=cmd_location)
     cli_outing.register(sub)
     cli_prs.register(sub)
+    cli_reports.register(sub)
     cli_claude.register(sub)
     cli_phone.register(sub)
 

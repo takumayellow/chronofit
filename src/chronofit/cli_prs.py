@@ -22,10 +22,16 @@ def _session_files(settings, since, archives):
     return claude_sessions.unique_sessions(files)
 
 
-def engaged_by_repo(settings, since, archives):
+def read_sessions(settings, since, archives):
+    """`since` 以降に動いた会話（手元と退避先）を読む。"""
+    return [claude_sessions.read_session(path)
+            for path in _session_files(settings, since, archives)]
+
+
+def engaged_by_repo(settings, since, archives, sessions=None):
     """リポジトリ名 → Claude が動いていた区間。見つけたリポジトリの置き場所は残しておく。"""
-    sessions = [claude_sessions.read_session(path)
-                for path in _session_files(settings, since, archives)]
+    if sessions is None:
+        sessions = read_sessions(settings, since, archives)
     resolver = repo_context.Resolver(repo_context.load_cache(paths.data_root()))
     resolver.learn(sessions)
     repo_context.save_cache(paths.data_root(), resolver.roots)
