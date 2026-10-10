@@ -114,6 +114,13 @@ class GithubPrsTest(unittest.TestCase):
         self.assertEqual([(r["repo"], r["number"]) for r in rows], [("alpha", 2)])
         self.assertEqual(rows[0]["merged"] - rows[0]["created"], timedelta(hours=1))
 
+    def test_parse_keeps_title_as_text(self):
+        base = {"repository": {"name": "alpha"}, "createdAt": "2026-01-05T09:00:00Z",
+                "closedAt": "2026-01-05T10:00:00Z"}
+        rows = github_prs.parse([{**base, "number": 1, "title": "unit1/02: draft"},
+                                 {**base, "number": 2, "title": None}])
+        self.assertEqual([r["title"] for r in rows], ["unit1/02: draft", ""])
+
 
 class ArchiveTest(unittest.TestCase):
     def test_unique_sessions_keeps_larger_copy(self):

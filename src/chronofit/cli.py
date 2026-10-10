@@ -33,7 +33,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cli_claude, cli_outing, cli_phone, cli_prs, cli_site, config, paths
+from . import (cli_claude, cli_outing, cli_phone, cli_prs, cli_reports, cli_site, config,
+               paths)
 from .collect import daemon
 from .estimate import attribute, curve, kinds, measured, offpc, slack
 from .plan import board, fit
@@ -546,7 +547,7 @@ def cmd_plan(args):
     """
     settings = config.load()
     try:
-        stored = _tasks(args.tasks)
+        stored = _planning_tasks(args.tasks)
     except (OSError, json.JSONDecodeError) as error:
         print(f"タスク定義を読めない: {error}")
         return 1
@@ -599,9 +600,14 @@ def cmd_plan(args):
         print("\n入りきらなかったもの:")
         for item in result["overflow"]:
             hours = f"{item['hours']:.1f}h" if item["hours"] is not None else "見積もり無し"
-            print(f"  {hours}  {item['subject']} {item['kind']}"
+            target = f" {item['target']}" if item.get("target") else ""
+            print(f"  {hours}  {item['subject']} {item['kind']}{target}"
                   f"（{item['index']}本目）— {item['reason']}")
         print("  → 減らすか、締切を動かすか、1日の持ち時間を増やすかを決める")
+    if result["later"]:
+        hours = sum(item["hours"] or 0.0 for item in result["later"])
+        print(f"\n{args.until} より後に始まるもの {len(result['later'])}本"
+              f"（{hours:.0f}h）は数えていない")
     return 0
 
 
@@ -705,6 +711,11 @@ def _tasks(path=None):
     return tasks_store.load(path or paths.tasks_path())
 
 
+def _planning_tasks(path=None):
+    """計画と進捗に使う一覧。作業中のレポートに使った時間を付ける（保存はしない）。"""
+    return board.with_progress(_tasks(path), cli_reports.load_progress())
+
+
 def sync_issues(quiet=False):
     """設定 `todo_project` があれば、開いている Issue を一覧へ写す。失敗しても止めない。
 
@@ -798,7 +809,7 @@ def cmd_board(args):
     見積もれない本）は 0 として合計に混ぜず、件数として別に出す。
     """
     settings = config.load()
-    task_list = _tasks(args.tasks)
+    task_list = _planning_tasks(args.tasks)
     if not task_list:
         print("一覧が空。chronofit task add <科目> <種別> --count N で足す。")
         # 一覧がまだ無いのは異常ではない。毎晩の自動実行から呼ばれるので、ここで
@@ -842,8 +853,16 @@ def record_prs():
     """前日までにマージした PR の作業時間を DB へ足す。gh や会話ログが読めなくても締めは止めない。"""
     try:
         cli_prs.record(quiet=True)
-    except (RuntimeError, OSError, ValueError) as error:
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
         print(f"PR の実績を記録できなかった: {error}", file=sys.stderr)
+
+
+def record_reports():
+    """完了したレポートの回を DB へ足し、作業中の回に使った時間を残す。失敗しても締めは止めない。"""
+    try:
+        cli_reports.record(quiet=True)
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
+        print(f"レポートの実績を記録できなかった: {error}", file=sys.stderr)
 
 
 def record_claude_time():
@@ -865,6 +884,7 @@ def cmd_daily(args):
     cli_outing.fetch_if_authorized()
     sync_issues(quiet=True)
     record_prs()
+    record_reports()
     record_claude_time()
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
@@ -905,7 +925,7 @@ def _board_for(date, settings, tasks_path=None):
         data = json.loads(snapshot.read_text(encoding="utf-8"))
         return data.get("rows") or [], data.get("summary"), f"{date} 時点の記録"
 
-    task_list = _tasks(tasks_path)
+    task_list = _planning_tasks(tasks_path)
     if not task_list:
         return [], None, None
     rows = board.rows(task_list, _instances(), settings,
@@ -990,6 +1010,7 @@ def build_parser():
     loc.set_defaults(func=cmd_location)
     cli_outing.register(sub)
     cli_prs.register(sub)
+    cli_reports.register(sub)
     cli_claude.register(sub)
     cli_phone.register(sub)
 

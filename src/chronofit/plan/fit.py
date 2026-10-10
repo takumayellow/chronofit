@@ -18,6 +18,7 @@
 from datetime import date, timedelta
 
 from ..estimate import curve, kinds, slack
+from . import board
 
 
 def days_between(start, end):
@@ -95,10 +96,13 @@ def expand(tasks, instances, settings=None):
             else:
                 estimate = curve.estimate(instances, subject, kind, index,
                                           task.get("assumed_hours"))
+            hours = estimate.get("hours")
+            if offset == 0:
+                hours = board.first_unit_hours(hours, task.get("progress_hours"))
             items.append({"subject": subject, "kind": kind, "mode": mode,
                           "target": task.get("target"), "index": index,
                           "start": task.get("start"), "due": task.get("due"),
-                          "hours": estimate.get("hours"),
+                          "hours": hours,
                           "basis": estimate.get("basis"),
                           "note": estimate.get("note")})
     return items
@@ -156,9 +160,15 @@ def make(tasks, instances, hours_by_type, until, settings=None, ratios=None,
     day_capacity = capacity(days, hours_by_type, habit_load, ratios,
                             weekend_days, workdays)
     weeks = weekly_capacity(day_capacity)
-    items = expand(tasks, instances, settings)
+    # 期間より後に始まる本は、入りきらなかったのではなく期間の外。overflow に混ぜると
+    # 「減らすか締切を動かす」判断を迫る嘘になるので、別に返して需要にも数えない。
+    horizon = week_key(until)
+    expanded = expand(tasks, instances, settings)
+    later = [item for item in expanded if item.get("start")
+             and week_key(date.fromisoformat(item["start"])) > horizon]
+    items = [item for item in expanded if item not in later]
     placed, overflow = allocate(items, weeks)
-    return {"weeks": weeks, "placed": placed, "overflow": overflow,
+    return {"weeks": weeks, "placed": placed, "overflow": overflow, "later": later,
             "habit_load": habit_load or [],
             "demand": sum(item["hours"] or 0.0 for item in items),
             "supply": sum(week["net"] for week in weeks),

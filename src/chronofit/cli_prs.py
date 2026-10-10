@@ -5,7 +5,7 @@ from pathlib import Path
 from . import config, paths
 from .estimate import db as estimate_db
 from .estimate import pr_actuals
-from .model import work
+from .model import repo_context
 from .sources import claude_sessions, github_prs
 
 LOOKBACK_DAYS = 35   # 会話ログは既定で 30 日で消えるので、それより少し長く見る
@@ -22,6 +22,23 @@ def _session_files(settings, since, archives):
     return claude_sessions.unique_sessions(files)
 
 
+def read_sessions(settings, since, archives):
+    """`since` 以降に動いた会話（手元と退避先）を読む。"""
+    return [claude_sessions.read_session(path)
+            for path in _session_files(settings, since, archives)]
+
+
+def engaged_by_repo(settings, since, archives, sessions=None):
+    """リポジトリ名 → Claude が動いていた区間。見つけたリポジトリの置き場所は残しておく。"""
+    if sessions is None:
+        sessions = read_sessions(settings, since, archives)
+    resolver = repo_context.Resolver(repo_context.load_cache(paths.data_root()))
+    resolver.learn(sessions)
+    repo_context.save_cache(paths.data_root(), resolver.roots)
+    return pr_actuals.engaged([resolver.marks(session) for session in sessions],
+                              lambda repo: (repo, repo is not None))
+
+
 def record(since_day=None, archives=None, quiet=False):
     """`since_day` 以降にマージした PR のうち、まだ DB に無いものを測って入れる。"""
     settings = config.load()
@@ -29,16 +46,7 @@ def record(since_day=None, archives=None, quiet=False):
     since = datetime.combine(since_day, time()).astimezone()
     archives = archives if archives is not None else _dirs(settings, "claude_archive_dirs")
     prs = github_prs.fetch_merged(since_day)
-    repos = {}
-
-    def repo_of(cwd):
-        if cwd not in repos:
-            repos[cwd] = work.repo_name(cwd)
-        return repos[cwd]
-
-    marks = (claude_sessions.read_session(path)["marks"]
-             for path in _session_files(settings, since, archives))
-    measured = pr_actuals.measure(prs, pr_actuals.engaged(marks, repo_of), since)
+    measured = pr_actuals.measure(prs, engaged_by_repo(settings, since, archives), since)
     db_path = estimate_db.default_path(paths.data_root())
     rows = pr_actuals.new_rows(measured, estimate_db.load(db_path), estimate_db.make)
     for row in rows:

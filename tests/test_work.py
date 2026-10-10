@@ -104,6 +104,15 @@ class Test会話ログ:
         sessions = [session("x", ("08:00", "/w/early"))]
         assert claude_sessions.cwds_near(sessions, at("20:00"), window_sec=600) == []
 
+    def test_索引はcwds_nearと同じ記録を返す(self):
+        sessions = [session("x", ("08:00", "/w/a"), ("11:55", "/w/b")),
+                    session("y", ("11:58", "/w/c"), ("12:00", "/w/d"), ("15:00", "/w/e"))]
+        index = claude_sessions.MarkIndex(sessions)
+        for moment in ("07:00", "08:05", "11:59", "13:30", "18:30", "23:00"):
+            expected = claude_sessions.cwds_near(sessions, at(moment), window_sec=600)
+            assert sorted(index.near(at(moment), window_sec=600)) == sorted(expected)
+        assert claude_sessions.MarkIndex([]).near(at("12:00")) == []
+
 
 class Test画面:
     def test_1分未満の作業は行に出さず_割り付けた割合を出す(self):

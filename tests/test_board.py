@@ -79,11 +79,46 @@ class Test残り時間:
         assert row["remaining_hours"] == pytest.approx(6.0)
 
 
+class Test作業中の回:
+    REPORTS = [{"subject": "実験", "kind": "レポート", "target": "第1回", "index": 1,
+                "net_hours": 6.0, "mode": "oneoff"}]
+
+    def report(self, **over):
+        return {"subject": "実験", "kind": "レポート", "target": "第2回", **over}
+
+    def test_回を名指ししたタスクにだけ使った時間を付け_元の一覧は変えない(self):
+        tasks = [self.report(), self.report(target=None), task()]
+        marked = board.with_progress(tasks, {("実験", "レポート", "第2回"): 2.5})
+        assert [t.get("progress_hours") for t in marked] == [2.5, None, None]
+        assert "progress_hours" not in tasks[0]
+
+    def test_作業中の回は見積もりから使ったぶんを引き_進行中にする(self):
+        row = board.progress(self.report(progress_hours=2.5), self.REPORTS, SETTINGS, TODAY)
+        assert row["remaining_hours"] == pytest.approx(3.5)
+        assert row["spent_hours"] == pytest.approx(2.5)
+        assert row["state"] == board.IN_PROGRESS
+
+    def test_見積もりを超えても残りは0にしない(self):
+        row = board.progress(self.report(progress_hours=9.0), self.REPORTS, SETTINGS, TODAY)
+        assert row["remaining_hours"] == pytest.approx(board.report_actuals.MIN_REMAINING_HOURS)
+
+    def test_計画にも引いた見積もりで載る(self):
+        from chronofit.plan import fit
+        items = fit.expand([self.report(progress_hours=2.5, count=2)], self.REPORTS, SETTINGS)
+        assert [item["hours"] for item in items] == pytest.approx([3.5, 6.0])
+
+
 class Test締切:
     def test_締切までの日数と1日あたりの必要量を出す(self):
         row = board.progress(task(due="2026-08-19"), INSTANCES, SETTINGS, TODAY)
         assert row["days_left"] == 10
         assert row["hours_per_day"] == pytest.approx(row["remaining_hours"] / 10, abs=0.01)
+
+    def test_手を付けられる日が先なら_そこから締切までで割る(self):
+        row = board.progress(task(start="2026-08-15", due="2026-08-19"), INSTANCES, SETTINGS,
+                             TODAY)
+        assert row["days_left"] == 10
+        assert row["hours_per_day"] == pytest.approx(row["remaining_hours"] / 4, abs=0.01)
 
     def test_締切が無ければ日あたりも出さない(self):
         row = board.progress(task(), INSTANCES, SETTINGS, TODAY)

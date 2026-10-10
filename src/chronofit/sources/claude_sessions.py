@@ -4,16 +4,23 @@
 同じ作業名を会話ログから引けば、その時刻にどのディレクトリ（リポジトリ）で
 動いていたかが分かる。
 
-- 読むのは作業名・時刻・作業ディレクトリだけ。発言の中身は読まない
+- 読むのは作業名・時刻・作業ディレクトリと、触ったパス（編集したファイルのパスと、
+  Bash のコマンドの先頭にある `cd` の行き先）だけ。発言・コマンドの残り・ファイルの中身は読まない
 - ログの置き場所は `~/.claude*/projects/*/*.jsonl`（設定ディレクトリを複数持てる）。
   設定 `claude_dirs` で差し替えられる
 - 指定した日より前に更新が止まったファイルは開かない
 """
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+import os
+import re
+from bisect import bisect_left, bisect_right
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath
 
 TITLE_TYPES = {"ai-title": "aiTitle", "custom-title": "customTitle"}
+EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
+_LEADING_CD = re.compile(r"""^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))""")
+_MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?:/|$)")
 
 
 def default_roots():
@@ -44,13 +51,62 @@ def _time(value):
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
+def cd_target(command, cwd):
+    """Bash のコマンドが最初に `cd` する先。`cd` で始まらなければ None。
+
+    Git Bash の `/c/...` と `~` は Windows のパスに直す。相対パスは作業ディレクトリから辿る。
+    """
+    match = _LEADING_CD.match(command or "")
+    if not match:
+        return None
+    target = next(group for group in match.groups() if group)
+    if "$" in target or target == "-":
+        return None
+    if target.startswith("~"):
+        target = os.path.expanduser(target)
+    elif os.name == "nt" and _MSYS_DRIVE.match(target):
+        target = _MSYS_DRIVE.sub(lambda m: f"{m.group(1).upper()}:/", target, count=1)
+    path = Path(target)
+    if not path.is_absolute() and not PurePosixPath(target).is_absolute():
+        path = Path(cwd) / target
+    return str(path)
+
+
+def touched_paths(record):
+    """1行の記録で触ったパス。編集したファイルと、Bash の先頭の `cd` 先だけを見る。"""
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    found = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "tool_use":
+            continue
+        tool_input = item.get("input")
+        if not isinstance(tool_input, dict):
+            continue
+        name = item.get("name")
+        if name in EDIT_TOOLS:
+            value = tool_input.get(EDIT_TOOLS[name])
+            if isinstance(value, str) and value:
+                found.append(value)
+        elif name == "Bash" and isinstance(tool_input.get("command"), str):
+            target = cd_target(tool_input["command"], record["cwd"])
+            if target:
+                found.append(target)
+    return found
+
+
 def read_session(path):
-    """1本の会話ログから `{"titles": {...}, "marks": [(時刻, 作業ディレクトリ), ...]}`。"""
-    titles, marks = set(), []
+    """1本の会話ログを読む。
+
+    `{"titles": {...}, "marks": [(時刻, 作業ディレクトリ)], "touches": [(時刻, 作業ディレクトリ, パス)]}`
+    """
+    titles, marks, touches = set(), [], []
     try:
         lines = path.open(encoding="utf-8", errors="replace")
     except OSError:
-        return {"titles": titles, "marks": marks}
+        return {"titles": titles, "marks": marks, "touches": touches}
     with lines:
         for line in lines:
             if '"cwd"' not in line and 'Title"' not in line:
@@ -67,8 +123,12 @@ def read_session(path):
             moment = _time(record.get("timestamp")) if record.get("cwd") else None
             if moment and isinstance(record["cwd"], str):
                 marks.append((moment, record["cwd"]))
+                if '"tool_use"' in line:
+                    touches.extend((moment, record["cwd"], found)
+                                   for found in touched_paths(record))
     marks.sort(key=lambda mark: mark[0])
-    return {"titles": titles, "marks": marks}
+    touches.sort(key=lambda touch: touch[0])
+    return {"titles": titles, "marks": marks, "touches": touches}
 
 
 def index(sessions):
@@ -103,6 +163,34 @@ def cwds_near(sessions, moment, window_sec=1800, fallback_max_sec=FALLBACK_MAX_S
     if near:
         return near
     return [best[1]] if best and best[0] <= fallback_max_sec else []
+
+
+class MarkIndex:
+    """会話の列の記録を時刻順に並べ、`cwds_near` と同じ答えを二分探索で返す。
+
+    全部の会話を相手に何百回も聞く（名前の無い窓の多数決）ときに使う。
+    幅の中の記録は時刻順で返す（`cwds_near` は会話順）。幅の外の一番近い記録が前後で同じ
+    距離のときは手前を選ぶ（`cwds_near` は会話順で先のもの）。多数決にしか使わないので効かない。
+    """
+
+    def __init__(self, sessions):
+        marks = sorted(((moment, cwd) for session in sessions
+                        for moment, cwd in session["marks"]), key=lambda mark: mark[0])
+        self.times = [moment for moment, _ in marks]
+        self.cwds = [cwd for _, cwd in marks]
+
+    def near(self, moment, window_sec=1800, fallback_max_sec=FALLBACK_MAX_SEC):
+        width = timedelta(seconds=window_sec)
+        low = bisect_left(self.times, moment - width)
+        high = bisect_right(self.times, moment + width)
+        if low < high:
+            return self.cwds[low:high]
+        gaps = [(abs((self.times[i] - moment).total_seconds()), i)
+                for i in (low - 1, low) if 0 <= i < len(self.times)]
+        if not gaps:
+            return []
+        gap, i = min(gaps)
+        return [self.cwds[i]] if gap <= fallback_max_sec else []
 
 
 def load(since, roots=None):

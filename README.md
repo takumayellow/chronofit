@@ -116,6 +116,8 @@ python -m chronofit done 応用数学B 過去問 --match 2024   # PC作業ぶん
 python -m chronofit done 応用数学B 過去問 --offpc        # 紙でやったぶんを離席ラベルから
 python -m chronofit prs record    # マージした PR の作業時間を会話ログから（daily が毎晩自動で走らせる）
 python -m chronofit prs backtest  # PR の実績を1件ずつ抜いて、見積もりの当たり具合を測る
+python -m chronofit reports         # 連作のレポート1本ごとの所要時間と、作業中の回の残り
+python -m chronofit reports record  # 提出した回を DB へ入れる（daily が毎晩自動で走らせる）
 
 # Claude との会話に使った時間の配分
 python -m chronofit claude --days 30   # プロジェクトごとの時間・割合・待ち/対話・種別（レポート等）
@@ -158,7 +160,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 所要時間DB（`done` が書く）から数える**。チェック欄を別に持たせない。付け忘れた瞬間に
 嘘の進捗になるからで、記録を二重に付けさせないのはこの計測系全体の方針でもある。
 
-一覧は `%LOCALAPPDATA%\chronofit	asks.json` に1つだけ置く（`task add` / `task rm`）。
+一覧は `%LOCALAPPDATA%\chronofit\tasks.json` に1つだけ置く（`task add` / `task rm`）。
 設定 `todo_project`（`{"owner": ..., "number": ...}`）があれば、その GitHub Project で
 開いている Issue を `task sync` で一覧へ写す。`daily` と当日の `report` も毎回写すので、
 閉じた Issue は一覧から消え、締め切り（Project の Target）もそのまま付く。`gh` は読むだけ。
@@ -168,6 +170,39 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows-task
 残り時間は1本ずつ見積もって足す。学習曲線があるので「1本の見積もり × 残り本数」には
 ならない。見積もれない本が混ざったら**合計を出さず、件数として別に出す**。足せるものだけ
 足すと、根拠の無い本を 0 時間として計画に混ぜることになる。
+
+## レポート1本の所要時間
+
+実験レポートのように1つのリポジトリで回を重ねて書くものは、`done` を打たなくても1本ごとの
+所要時間が溜まる。設定 `report_series` に連作を書く（科目名や回の書き方は人によるので、
+このリポジトリには置かない）:
+
+```json
+"report_series": [{
+  "subject": "実験", "kind": "レポート", "repo": "lab-2026",
+  "unit_patterns": ["theme(?P<theme>\\d)/(?P<n>\\d+)", "テーマ(?P<theme>\\d) 第(?P<n>\\d+)回"],
+  "target": "テーマ{theme} 第{n}回",
+  "done_pattern": "提出を記録",
+  "title_patterns": ["実験"], "span_patterns": ["^MATLAB\\.exe "]
+}]
+```
+
+- PR をマージ順に並べて時間を区切り、PR のタイトルの回の印（`unit_patterns`）でどの回の
+  作業かを決める。`done_pattern` に当たる PR で、その回を完了とする。
+- 時間は PC の入力（そのリポジトリに割り付いたスパンと、`title_patterns`・`span_patterns`・
+  回の印に当たるスパン）と、そのリポジトリで Claude が動いていた区間の和集合。
+- 完了の後のその回の手直しは「提出後」として別に出し、1本の所要時間には入れない。
+  回の印の無い作業（雛形・解説サイトなど）は「共通」として別に出す。
+- `reports record`（`daily` から毎晩）が完了した回を DB へ入れ（`source = report-series`）、
+  作業中の回に使った時間を `report_progress.json` に残す。`board` / `plan` は、回を
+  `--target` で名指ししたタスクの見積もりから、その時間を引く（引いても最低 0.5h は残す）。
+
+```bash
+python -m chronofit task add 実験 レポート --target "テーマ1 第2回" --start 2026-10-05 --due 2026-10-12
+```
+
+見えない時間はある。別の PC（実験室の PC・クラウドの会話）での作業と、Claude を使わずに
+紙で書いた時間は入らない。
 
 ## 見積もりの出し方
 

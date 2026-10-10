@@ -21,5 +21,7 @@ sources.json
 activities.json
 events.json
 tasks.json
+report_progress.json
+repo_dirs.json
 *.bin
 .env

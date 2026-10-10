@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from . import work
-from ..sources import history
+from ..sources import claude_sessions, history
 
 CLAUDE_WINDOW_SEC = 900        # 多数決は、この前後に記録のある会話から決める
 CLAUDE_FALLBACK_SEC = 1800
@@ -123,6 +123,7 @@ class _Resolver:
                 if id(session) not in seen:
                     seen.add(id(session))
                     self.all_sessions.append(session)
+        self.all_marks = claude_sessions.MarkIndex(self.all_sessions)
         self.keys = [self._project_key(span) for span in spans]
         self.windows = {}         # tmux の窓 → [(開始, (リポジトリ, 作業))]
         for span, key in zip(spans, self.keys):
@@ -137,9 +138,9 @@ class _Resolver:
     def _vote(self, span):
         if not self.all_sessions:
             return None
-        cwds = self.cwds_near(self.all_sessions, datetime.fromisoformat(span["start"]),
-                              window_sec=CLAUDE_WINDOW_SEC,
-                              fallback_max_sec=CLAUDE_FALLBACK_SEC)
+        cwds = self.all_marks.near(datetime.fromisoformat(span["start"]),
+                                   window_sec=CLAUDE_WINDOW_SEC,
+                                   fallback_max_sec=CLAUDE_FALLBACK_SEC)
         return work.vote(cwds, self.repo_of, self.repo_cache)
 
     def _same_window(self, span):
@@ -198,6 +199,18 @@ def _window(span):
     return match.group(1) if match else None
 
 
+def decisions(spans, sessions, cwds_near, visits=(), rules=(), browse_rules=(),
+              repo_of=work.repo_name):
+    """入力のあったスパンを時刻順に、`(スパン, (プロジェクト, 括り, 名前, 内訳))` で返す。
+
+    `attribute` の集計の元。スパン単位で数え直したいとき（レポート1本の時間など）に使う。
+    """
+    spans = sorted((span for span in spans if float(span.get("active_sec") or 0) > 0),
+                   key=lambda span: span["start"])
+    resolver = _Resolver(spans, sessions, cwds_near, visits, rules, browse_rules, repo_of)
+    return [(span, resolver.decide(position, span)) for position, span in enumerate(spans)]
+
+
 def attribute(spans, sessions, cwds_near, visits=(), rules=(), browse_rules=(),
               repo_of=work.repo_name):
     """入力のあったスパンを全部、行き先ごとの行へまとめる。
@@ -209,14 +222,11 @@ def attribute(spans, sessions, cwds_near, visits=(), rules=(), browse_rules=(),
     - unclassified: [{"label"（アプリ）, "active_sec", "tasks"}]
     - sec: 入力のあった時間の合計
     """
-    spans = sorted((span for span in spans if float(span.get("active_sec") or 0) > 0),
-                   key=lambda span: span["start"])
-    resolver = _Resolver(spans, sessions, cwds_near, visits, rules, browse_rules, repo_of)
     project_rows, activity_rows, total = {}, {}, 0.0
-    for position, span in enumerate(spans):
+    for span, (project, group, name, detail) in decisions(
+            spans, sessions, cwds_near, visits, rules, browse_rules, repo_of):
         seconds = float(span["active_sec"])
         total += seconds
-        project, group, name, detail = resolver.decide(position, span)
         if project:
             _add(project_rows, (project, name), {"repo": project, "task": name}, span, seconds)
         else:
