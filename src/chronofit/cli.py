@@ -853,7 +853,7 @@ def record_prs():
     """前日までにマージした PR の作業時間を DB へ足す。gh や会話ログが読めなくても締めは止めない。"""
     try:
         cli_prs.record(quiet=True)
-    except (RuntimeError, OSError, ValueError) as error:
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
         print(f"PR の実績を記録できなかった: {error}", file=sys.stderr)
 
 
@@ -861,7 +861,7 @@ def record_reports():
     """完了したレポートの回を DB へ足し、作業中の回に使った時間を残す。失敗しても締めは止めない。"""
     try:
         cli_reports.record(quiet=True)
-    except (RuntimeError, OSError, ValueError) as error:
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
         print(f"レポートの実績を記録できなかった: {error}", file=sys.stderr)
 
 
