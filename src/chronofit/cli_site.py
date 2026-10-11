@@ -23,7 +23,7 @@ from .ui import report, site_index
 
 INDEX_DAYS = 14
 SITE_HOST = "127.0.0.1"
-SITE_PORT = 47615      # 開発用サーバーがよく使う 8000 番台を避ける
+SITE_PORT = 27615      # 8000 番台（開発用サーバー）と、WSL mirrored モードが Linux 側に取り置く 32768 以上を避ける
 
 
 def logical_today(settings):
