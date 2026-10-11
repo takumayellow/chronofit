@@ -18,7 +18,7 @@ from pathlib import Path
 from . import cli_prs, config, paths, report_extras
 from .estimate import db as estimate_db
 from .estimate import kinds, report_actuals
-from .model import activity, rollup
+from .model import activity, repo_context, rollup
 from .sources import claude_sessions, github_prs
 
 LOOKBACK_DAYS = cli_prs.LOOKBACK_DAYS
@@ -56,17 +56,19 @@ def measure(series_list, settings, since_day=None, archives=None, now=None):
     archives = archives if archives is not None else cli_prs._dirs(settings,
                                                                     "claude_archive_dirs")
     sessions = cli_prs.read_sessions(settings, since, archives)
-    engaged = cli_prs.engaged_by_repo(settings, since, archives, sessions)
+    resolver = cli_prs.repo_resolver(sessions)
+    engaged = cli_prs.engaged_by_repo(settings, since, archives, sessions, resolver)
     browse_rules = (settings.get("title_rules") or []) + (settings.get("url_rules") or [])
     raw = _spans(since_day, now.date())
     present = report_actuals.presence(
         [(datetime.fromisoformat(span["start"]).astimezone(), float(span.get("active_sec") or 0))
          for span in raw])
-    decided = activity.decisions(raw, claude_sessions.index(sessions),
+    decided = activity.decisions(raw,
+                                 claude_sessions.index(repo_context.relocate(sessions, resolver)),
                                  claude_sessions.cwds_near,
                                  visits=report_extras._visits(since),
                                  rules=settings.get("activity_rules") or [],
-                                 browse_rules=browse_rules)
+                                 browse_rules=browse_rules, repo_of=resolver.repo_of)
     prs = github_prs.fetch_merged(since_day)
     result = []
     for series in series_list:

@@ -8,7 +8,7 @@ from datetime import date as date_type, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from . import cli_outing, paths
-from .model import activity, rollup
+from .model import activity, repo_context, rollup
 from .sources import browser, claude_sessions, gcal, github_done, history, location
 
 _EXPECTED = (RuntimeError, OSError, ValueError, KeyError, TypeError)
@@ -40,13 +40,17 @@ def work_groups(day, settings, bounds=None, records=None):
     spans = [record for record in records if record["t"] == "span"]
     since = (bounds[0] if bounds else
              datetime.combine(date_type.fromisoformat(day), time()).astimezone())
-    roots = [Path(root).expanduser() for root in settings.get("claude_dirs") or []] or None
-    sessions = claude_sessions.load(since, roots)
+    roots = [Path(root).expanduser() for root in settings.get("claude_dirs") or []]
+    files = claude_sessions.transcript_files(roots or claude_sessions.default_roots(), since)
+    sessions = [claude_sessions.read_session(path) for path in files]
+    resolver = repo_context.learned(sessions, paths.data_root())
     browse_rules = (settings.get("title_rules") or []) + (settings.get("url_rules") or [])
-    return activity.attribute(spans, sessions, claude_sessions.cwds_near,
+    return activity.attribute(spans,
+                              claude_sessions.index(repo_context.relocate(sessions, resolver)),
+                              claude_sessions.cwds_near,
                               visits=_visits(since),
                               rules=settings.get("activity_rules") or [],
-                              browse_rules=browse_rules)
+                              browse_rules=browse_rules, repo_of=resolver.repo_of)
 
 
 def outings(day, bounds=None, phone_spans=()):

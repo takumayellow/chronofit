@@ -7,6 +7,7 @@ Claude の会話ログで同じ作業名を引いて、その時刻の作業デ�
 ブラウザで GitHub のページ（`… · owner/repo`）を見ていた時間もそのリポジトリへ寄せる。
 どちらにも当たらない時間はここでは扱わない（アプリ別の表が別にある）。
 """
+import glob
 import re
 from collections import Counter
 from datetime import datetime
@@ -32,6 +33,55 @@ def github_repo(title):
     """GitHub のページのタイトル末尾にある `owner/repo`。無ければ None。"""
     match = _GITHUB.search(title or "")
     return match.group(1).rsplit("/", 1)[-1] if match else None
+
+
+_EDITOR = re.compile(r"^.+? \((?P<dir>[^()]+)\) - N?VIM\d*$")
+_ELLIPSIS = "..."
+MAX_HIDDEN_PARTS = 4   # 省略された部分に収まっていてよいフォルダの階層の数
+
+
+def editor_dir(title):
+    """vim の窓のタイトル `<ファイル> [+] (<フォルダ>) - VIM` のフォルダ。今ディスクに無ければ None。
+
+    長いフォルダは途中が `...` で省略される。前後の部分から一致するフォルダを探す。
+    ネットワーク上のフォルダ（UNC パス）は見に行かない。
+    """
+    match = _EDITOR.match(title or "")
+    if not match:
+        return None
+    text = match.group("dir")
+    if text.startswith(("\\\\", "//")):
+        return None
+    if _ELLIPSIS not in text:
+        folder = Path(text).expanduser()
+        return folder if folder.is_dir() else None
+    return _unabbreviate(*text.split(_ELLIPSIS, 1))
+
+
+def _unabbreviate(head, tail):
+    """`head...tail` に当たるフォルダ。前の最後の部品と後の最初の部品は途中で切れている。
+
+    探すのは `head` の親の下だけ。親がドライブの根やホームのように広い場所なら探さない。
+    当たりが2つ以上あればどれか決められないので None。
+    """
+    head_path, tail_parts = Path(head).expanduser(), Path(tail).parts
+    base, head_cut = head_path.parent, head_path.name
+    if (not tail_parts or base == base.parent or base == Path.home()
+            or not base.is_dir()):
+        return None
+    rest = Path(*tail_parts[1:]) if len(tail_parts) > 1 else Path()
+    head_cut, first = glob.escape(head_cut), glob.escape(tail_parts[0])
+    patterns = [f"{head_cut}*{first}"]
+    patterns += [str(Path(f"{head_cut}*", *["*"] * hidden, f"*{first}"))
+                 for hidden in range(MAX_HIDDEN_PARTS + 1)]
+    found = set()
+    for pattern in patterns:
+        for candidate in base.glob(pattern):
+            if (candidate / rest).is_dir():
+                found.add(candidate / rest)
+                if len(found) > 1:
+                    return None
+    return found.pop() if found else None
 
 
 def repo_name(cwd):

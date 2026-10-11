@@ -28,13 +28,16 @@ def read_sessions(settings, since, archives):
             for path in _session_files(settings, since, archives)]
 
 
-def engaged_by_repo(settings, since, archives, sessions=None):
-    """リポジトリ名 → Claude が動いていた区間。見つけたリポジトリの置き場所は残しておく。"""
+def repo_resolver(sessions):
+    """会話の触ったパスを覚えた `repo_context.Resolver`。見つけた置き場所は残しておく。"""
+    return repo_context.learned(sessions, paths.data_root())
+
+
+def engaged_by_repo(settings, since, archives, sessions=None, resolver=None):
+    """リポジトリ名 → Claude が動いていた区間。"""
     if sessions is None:
         sessions = read_sessions(settings, since, archives)
-    resolver = repo_context.Resolver(repo_context.load_cache(paths.data_root()))
-    resolver.learn(sessions)
-    repo_context.save_cache(paths.data_root(), resolver.roots)
+    resolver = resolver or repo_resolver(sessions)
     return pr_actuals.engaged([resolver.marks(session) for session in sessions],
                               lambda repo: (repo, repo is not None))
 

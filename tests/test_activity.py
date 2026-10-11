@@ -133,6 +133,23 @@ class Test名前の無い窓:
         assert projects(result) == {"big": [(activity.UNNAMED_CLAUDE, 600.0)]}
 
 
+class Test_vimの窓:
+    def test_タイトルのフォルダのリポジトリへ_gitの外なら他の決め方に回す(self, tmp_path):
+        inside, outside = tmp_path / "lab-notes" / "src", tmp_path / "scratch"
+        inside.mkdir(parents=True)
+        outside.mkdir()
+
+        def repo_of_dir(path):
+            return ("lab-notes", True) if "lab-notes" in path else ("scratch", False)
+
+        spans = [span("10:00:00", f"a.m + ({inside}) - VIM8"),
+                 span("10:20:00", f"b.txt ({outside}) - VIM8")]
+        decided = activity.decisions(spans, {}, claude_sessions.cwds_near,
+                                     repo_of=repo_of_dir)
+        assert decided[0][1][:3] == ("lab-notes", None, activity.EDITOR)
+        assert decided[1][1][0] is None
+
+
 class Test外出:
     BOUNDS = (at("05:00:00"), at("05:00:00") + timedelta(days=1))
 
