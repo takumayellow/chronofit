@@ -33,6 +33,7 @@ SAME_WINDOW_SEC = 3 * 3600     # 名前の無い窓は、この時間以内に�
 URL_MAX_GAP = timedelta(hours=6)   # これより離れた同じタイトルの訪問は別の閲覧とみなす
 MIN_OUTING_SEC = 300
 UNNAMED_CLAUDE = "Claude Code（名前の無い窓）"
+EDITOR = "エディタ"
 STUDY_GROUP = "学習"
 
 _BROWSER_SUFFIX = re.compile(
@@ -143,6 +144,19 @@ class _Resolver:
                                    fallback_max_sec=CLAUDE_FALLBACK_SEC)
         return work.vote(cwds, self.repo_of, self.repo_cache)
 
+    def _editing(self, span):
+        """ターミナルの vim がタイトルに出しているフォルダのリポジトリ。git の外なら None。"""
+        if span.get("proc") not in work.TERMINALS:
+            return None
+        folder = work.editor_dir(span.get("title"))
+        if folder is None:
+            return None
+        key = str(folder)
+        if key not in self.repo_cache:
+            self.repo_cache[key] = self.repo_of(key)
+        name, in_git = self.repo_cache[key]
+        return name if in_git else None
+
     def _same_window(self, span):
         named = self.windows.get(_window(span)) or []
         near = [(_seconds_between(start, span["start"]), key) for start, key in named]
@@ -163,6 +177,9 @@ class _Resolver:
             self.last_terminal = (span["end"], key)
         if key:
             return key[0], None, key[1], None
+        editing = self._editing(span)
+        if editing:
+            return editing, None, EDITOR, None
         browser = proc in work.BROWSERS
         url = url_for(span, self.index) if browser else None
         shown = page_title(title) if browser else title

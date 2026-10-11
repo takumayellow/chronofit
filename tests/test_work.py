@@ -166,3 +166,48 @@ def test_これからの予定に出る時刻と終わる時刻の目安を出�
                                               "forecast": None}]})
     assert "これから 店・14:49 ごろ出る・16:12 ごろ終わる（過去3回）" in html
     assert "<td class='muted'>これから</td>" in html
+
+
+class Test_vimの窓:
+    def make(self, root):
+        folder = root / "subjects" / "2_term" / "lab-notes" / "reports" / "prc"
+        folder.mkdir(parents=True)
+        return folder
+
+    def test_タイトルのフォルダを使い_無いフォルダやvim以外は使わない(self, tmp_path):
+        folder = self.make(tmp_path)
+        assert work.editor_dir(f"a.m + ({folder}) - VIM8") == folder
+        assert work.editor_dir(f"a.m ({folder}) - NVIM") == folder
+        assert work.editor_dir(f"a.m ({tmp_path / 'gone'}) - VIM") is None
+        assert work.editor_dir("tools 5:vim") is None
+        assert work.editor_dir(f"a.m ({folder}) - Notepad") is None
+
+    def test_途中が省略されたフォルダは前後から探す(self, tmp_path):
+        folder = self.make(tmp_path)
+        sep = "\\" if "\\" in str(tmp_path) else "/"
+        across = f"a.m ({tmp_path}{sep}subj...notes{sep}reports{sep}prc) - VIM2"
+        assert work.editor_dir(across) == folder
+        within = f"a.m ({tmp_path}{sep}subjects{sep}2_...rm{sep}lab-notes{sep}reports) - VIM"
+        assert work.editor_dir(within) == folder.parent
+        assert work.editor_dir(f"a.m ({tmp_path}{sep}subj...nothing{sep}x) - VIM") is None
+
+    def test_省略の当たりが2つならどちらとも決めない(self, tmp_path):
+        for name in ("proj-alpha", "proj-beta"):
+            (tmp_path / "work" / name / "src").mkdir(parents=True)
+        sep = "\\" if "\\" in str(tmp_path) else "/"
+        assert work.editor_dir(f"a.c ({tmp_path}{sep}work{sep}proj...ta{sep}src) - VIM") == (
+            tmp_path / "work" / "proj-beta" / "src")
+        assert work.editor_dir(f"a.c ({tmp_path}{sep}work{sep}proj...{sep}src) - VIM") is None
+
+    def test_フォルダ名の記号はワイルドカードにしない(self, tmp_path):
+        folder = tmp_path / "work" / "lab[1]notes" / "src"
+        folder.mkdir(parents=True)
+        (tmp_path / "work" / "lab1notes" / "src").mkdir(parents=True)
+        sep = "\\" if "\\" in str(tmp_path) else "/"
+        assert work.editor_dir(f"a.c ({tmp_path}{sep}work{sep}lab[...es{sep}src) - VIM") == folder
+
+    def test_広すぎる場所やネットワーク上のフォルダは探さない(self):
+        assert work.editor_dir(r"a.c (~\pr...ct\src) - VIM") is None
+        assert work.editor_dir("a.c (~/pr...ct/src) - VIM") is None
+        assert work.editor_dir(r"a.c (\\server\share\src) - VIM") is None
+        assert work.editor_dir("a.c (//server/sh...re/src) - VIM") is None

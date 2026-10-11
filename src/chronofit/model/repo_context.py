@@ -153,10 +153,14 @@ class Resolver:
                                or self._by_name(key))
         return self._repo[key]
 
-    def marks(self, session, ttl=TOUCH_TTL):
-        """会話1本の `[(時刻, リポジトリ名 または None)]`。`pr_actuals.engaged` に渡す形。"""
-        touches = [(moment, repo) for moment, _, touched in session["touches"]
-                   for repo in (self.repo(touched),) if repo]
+    def located(self, session, ttl=TOUCH_TTL):
+        """会話1本の `[(時刻, その時点で作業していた場所)]`。
+
+        `ttl` 以内にリポジトリの決まるパスを触っていればそのパス、無ければ作業ディレクトリ。
+        作業ディレクトリの祖先への `cd`（親のフォルダを見に行っただけ）は移った印にしない。
+        """
+        touches = [(moment, touched) for moment, cwd, touched in session["touches"]
+                   if self.repo(touched) and not _contains(touched, cwd)]
         times = [moment for moment, _ in touches]
         result = []
         for moment, cwd in session["marks"]:
@@ -164,8 +168,40 @@ class Resolver:
             if index >= 0 and moment - touches[index][0] <= ttl:
                 result.append((moment, touches[index][1]))
             else:
-                result.append((moment, self.repo(cwd)))
+                result.append((moment, cwd))
         return result
+
+    def marks(self, session, ttl=TOUCH_TTL):
+        """会話1本の `[(時刻, リポジトリ名 または None)]`。`pr_actuals.engaged` に渡す形。"""
+        return [(moment, self.repo(place)) for moment, place in self.located(session, ttl)]
+
+    def repo_of(self, path):
+        """`work.repo_name` と同じ形の `(名前, git の中か)`。消えた worktree も引く。"""
+        name = self.repo(path) if path else None
+        return (name, True) if name else work.repo_name(path)
+
+
+def _contains(folder, path):
+    """`path` が `folder` 自身かその下か。"""
+    folder, path = norm(folder), norm(path)
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def learned(sessions, data_root):
+    """会話の触ったパスを覚えた `Resolver`。見つけた置き場所は `repo_dirs.json` に残す。"""
+    resolver = Resolver(load_cache(data_root))
+    resolver.learn(sessions)
+    save_cache(data_root, resolver.roots)
+    return resolver
+
+
+def relocate(sessions, resolver):
+    """会話の記録の作業ディレクトリを、その時点で作業していた場所に置き換えた写し。
+
+    PC の入力（ターミナルの窓）を会話の記録で割り付けるとき、起動した場所ではなく
+    実際に触っていたリポジトリへ寄せるために使う。元の会話は変えない。
+    """
+    return [{**session, "marks": resolver.located(session)} for session in sessions]
 
 
 def load_cache(data_root):

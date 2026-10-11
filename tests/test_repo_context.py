@@ -151,6 +151,43 @@ class Test割り付け:
         spans = pr_actuals.engaged([resolver.marks(one)], lambda r: (r, r is not None))
         assert spans == {"notes": [(at(0), at(3))]}
 
+    def test_ターミナルの窓は起動した場所でなく触っていたリポジトリへ寄せる(self, tmp_path):
+        from chronofit.model import activity
+        opened = make_repo(tmp_path / "other")
+        notes = make_repo(tmp_path / "notes")
+        one = {**session(marks=[(at(0), str(opened)), (at(5), str(opened))],
+                         touches=[(at(0), str(opened), str(notes / "a.md"))]),
+               "titles": {"review"}}
+        resolver = repo_context.Resolver()
+        resolver.learn([one])
+        moved = repo_context.relocate([one], resolver)
+        assert one["marks"][0][1] == str(opened)      # 元の会話は変えない
+        start = at(1)
+        spans = [{"t": "span", "start": start.isoformat(),
+                  "end": (start + timedelta(minutes=2)).isoformat(), "sec": 120,
+                  "active_sec": 120, "proc": "WindowsTerminal.exe", "title": "s 1:review"}]
+        decided = activity.decisions(spans, claude_sessions.index(moved),
+                                     claude_sessions.cwds_near, repo_of=resolver.repo_of)
+        assert decided[0][1][0] == "notes"
+
+    def test_親のフォルダへのcdは移った印にせず_親のリポジトリの編集は移った印にする(self, tmp_path):
+        outer = make_repo(tmp_path / "materials")
+        inner = make_repo(outer / "course" / "lab-notes")
+        (outer / "course" / "notes").mkdir()
+        one = session(marks=[(at(1), str(inner)), (at(6), str(inner))],
+                      touches=[(at(0), str(inner), str(outer)),
+                               (at(0), str(inner), str(outer / "course")),
+                               (at(5), str(inner), str(outer / "course" / "notes" / "a.md"))])
+        resolver = repo_context.Resolver()
+        resolver.learn([one])
+        assert resolver.marks(one) == [(at(1), "lab-notes"), (at(6), "materials")]
+
+    def test_repo_ofはgitの外ならフォルダ名を外として返す(self, tmp_path):
+        (tmp_path / "plain").mkdir()
+        resolver = repo_context.Resolver()
+        assert resolver.repo_of(str(tmp_path / "plain")) == ("plain", False)
+        assert resolver.repo_of(str(make_repo(tmp_path / "notes"))) == ("notes", True)
+
 
 def test_git_bashのドライブ表記はWindowsのパスに直す():
     if os.name != "nt":
