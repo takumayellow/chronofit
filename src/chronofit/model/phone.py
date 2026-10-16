@@ -23,6 +23,10 @@ SLEEP_DEFAULTS = {
     # 二度寝: 起きてからこの時間内に始まり、これ以上続いた家での無操作
     "nap_within_hours": 3.0,
     "nap_min_minutes": 30.0,
+    "nap_bridge_minutes": 1.0,    # 二度寝の途中でこれ以下だけ触っても割らない（目覚ましを止めた等）
+    # 起きてからこの時間内に始まった、これ以上の最初の無操作は食事・身支度
+    "meal_within_minutes": 60.0,
+    "meal_min_minutes": 15.0,
     # 注意を出す目安。1晩がこれより短い、または就寝がこの時刻より遅い
     "warn_short_hours": 6.0,
     "warn_late_bed": "01:00",
@@ -368,9 +372,13 @@ def detect_naps(night, activity, covered, outside=None, settings=None, present=(
     `outside` が None（位置が分からない日）は、外出と区別できないので何も出さない。
     `present`（PC の在席区間）は除く。PC の前で動画を流していた時間などは、夜と違って
     二度寝に数えない。
-    間に `bridge_minutes` 以下だけ触った区間はつなぐ（目覚ましを止めただけ等）。
+    間に `nap_bridge_minutes` 以下だけ触った区間はつなぐ（目覚ましを止めただけ等）。
+    それより長く触っていれば起きていたので、そこで割る。
 
-    スマホを置いて起きていた時間（身支度・食事）とは区別が付かないので、候補として出す。
+    起きてすぐ食事や身支度に立つと、スマホを置いた無操作ができる。起床から
+    `meal_within_minutes` 内に `meal_min_minutes` 以上の無操作が始まり、その後に操作を
+    挟んで二度寝になり得る無操作がもう一度あれば、最初のほうを食事とみて数えない。無操作が1つしか無い朝は
+    どちらか分からないので、候補として残す。
     """
     if not night or outside is None:
         return []
@@ -380,21 +388,34 @@ def detect_naps(night, activity, covered, outside=None, settings=None, present=(
     latest = start + timedelta(hours=float(options["nap_within_hours"]))
     busy = _merge(_intersect(activity, [(start, finish)]))
     edges = [start] + [t for span in busy for t in span] + [finish]
+    bridge = timedelta(minutes=float(options["nap_bridge_minutes"]))
     # 終わりが時間帯の端の区間は、起きた手応え（操作）が無いので二度寝と言えない。
-    gaps = [(a, b) for a, b in zip(edges[::2], edges[1::2]) if a < b < finish]
-    bridge = timedelta(minutes=float(options["bridge_minutes"]))
+    # 触っている合間の数秒の途切れは無操作ではない。数えるとつながって、使っていた時間を覆う
+    gaps = [(a, b) for a, b in zip(edges[::2], edges[1::2])
+            if a < b < finish and b - a >= bridge]
     runs = []
     for gap in gaps:
         if runs and gap[0] - runs[-1][1] <= bridge:
             runs[-1] = (runs[-1][0], gap[1])
         else:
             runs.append(gap)
-    runs = _subtract(runs, _merge(present))
+    present, outside = _merge(present), _merge(outside)
+
+    def pieces(run, least):
+        """1つの無操作のうち、二度寝に数えられる部分。PC の在席で割れることがある。"""
+        return [(a, b) for a, b in _subtract([run], present)
+                if a <= latest and _total([(a, b)]) >= least and _inside((a, b), covered)
+                and not _intersect([(a, b)], outside)]
+
+    # 食事は割る前の無操作で見る。在席で割れた片や、二度寝になり得ない無操作（外出・
+    # 窓の後）を「その後の無操作」に数えると、本物の二度寝を食事として落とす
+    meal = float(options["meal_min_minutes"]) * 60
+    soon = start + timedelta(minutes=float(options["meal_within_minutes"]))
+    quiet = [i for i, run in enumerate(runs) if _total(_subtract([run], present)) >= meal]
+    if quiet and runs[quiet[0]][0] <= soon and any(pieces(runs[i], meal) for i in quiet[1:]):
+        runs = runs[quiet[0] + 1:]
     least = float(options["nap_min_minutes"]) * 60
-    outside = _merge(outside)
-    return [(a, b) for a, b in runs
-            if a <= latest and _total([(a, b)]) >= least and _inside((a, b), covered)
-            and not _intersect([(a, b)], outside)]
+    return [piece for run in runs for piece in pieces(run, least)]
 
 
 def _since_noon(moment):
