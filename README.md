@@ -138,6 +138,7 @@ python -m chronofit phone watch   # 再生中の題・チャンネルを1分ご�
 # 読む前と5分ごとに開け直される（USB 不要。docs/DESIGN.md L0）。入っていなければ adb connect だけ
 python -m chronofit board                       # いまどこまで来ているか
 python -m chronofit plan --until 2026-09-14     # 残りを週の容量へ割り付ける
+# 1日の持ち時間は睡眠と離席の実測から出す（設定 sleep_target が目標の睡眠。docs/DESIGN.md L3）
 python -m chronofit coverage                    # 所要時間DBに何が溜まっているか
 python -m chronofit history --days 14           # ブラウザ履歴を分類して過去を埋める
 
