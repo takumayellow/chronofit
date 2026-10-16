@@ -36,7 +36,7 @@ from pathlib import Path
 from . import (cli_claude, cli_outing, cli_phone, cli_prs, cli_reports, cli_site, config,
                paths)
 from .collect import daemon
-from .estimate import attribute, curve, kinds, measured, offpc, slack
+from .estimate import attribute, curve, kinds, life, measured, offpc, slack
 from .plan import board, fit
 from .plan import tasks as tasks_store
 from .estimate import db as estimate_db
@@ -555,13 +555,60 @@ def cmd_capacity(args):
     return 0
 
 
+CAPACITY_DEFAULTS = {"平日": 8.0, "休日": 8.0, "出社": 3.0}
+
+
+def _life_hours(settings, window=14, today=None):
+    """生活時間の実測から出した日タイプごとの持ち時間。今日はまだ途中なので含めない。"""
+    end = (today or datetime.now().date()) - timedelta(days=1)
+    since, until = (end - timedelta(days=window - 1)).isoformat(), end.isoformat()
+    # PC の外でした習慣だけを日ごとに。PC での習慣は離席に入っていない
+    habit_hours = {}
+    for row in measured.habit_rows(kinds.habits(settings), paths.label_dir(), None,
+                                   since, until):
+        habit_hours[row["date"]] = habit_hours.get(row["date"], 0.0) + row["net_hours"]
+    day_types = settings.get("day_types", {})
+    return life.hours_by_type(slack.load_rollups(paths.rollup_dir()),
+                              life.target_hours(settings.get("sleep_target")), habit_hours,
+                              weekend_days=tuple(day_types.get("weekend", (5, 6))),
+                              workdays=tuple(day_types.get("workdays", ())),
+                              since=since, until=until)
+
+
+def _capacity(settings, args, today=None):
+    """日タイプごとの1日の持ち時間と、実測から出した日タイプの内訳の行。
+
+    優先は 設定の `capacity_hours` > `--hours` / `--workday-hours` > 生活時間の実測 > 既定。
+    """
+    configured = settings.get("capacity_hours")
+    hours_by_type = ({kind: float(value) for kind, value in configured.items()
+                      if isinstance(value, (int, float)) and not isinstance(value, bool)}
+                     if isinstance(configured, dict) else {})
+    flags = {"平日": getattr(args, "hours", None), "休日": getattr(args, "hours", None),
+             "出社": getattr(args, "workday_hours", None)}
+    measured_hours = _life_hours(settings, getattr(args, "window", None) or 14, today)
+    target = life.target_hours(settings.get("sleep_target"))
+    notes = []
+    for kind, default in CAPACITY_DEFAULTS.items():
+        if kind in hours_by_type:
+            continue
+        if flags[kind] is not None:
+            hours_by_type[kind] = flags[kind]
+        elif kind in measured_hours:
+            hours_by_type[kind] = measured_hours[kind]["hours"]
+            notes.append(life.format_entry(kind, measured_hours[kind], target))
+        else:
+            hours_by_type[kind] = default
+            # 出社日を使っていなければ、出社の既定は計画に関わらないので言わない
+            if kind != "出社" or settings.get("day_types", {}).get("workdays"):
+                notes.append(f"持ち時間 {kind} {default:g}h（既定。生活時間の実測が"
+                             f"{life.MIN_DAYS}日に満たない）")
+    return hours_by_type, notes
+
+
 def _capacity_hours(settings, args):
-    """日タイプごとの1日の持ち時間。設定が持っていればそちらが勝つ。"""
-    hours_by_type = dict(settings.get("capacity_hours") or {})
-    hours_by_type.setdefault("平日", getattr(args, "hours", None) or 8.0)
-    hours_by_type.setdefault("休日", getattr(args, "hours", None) or 8.0)
-    hours_by_type.setdefault("出社", getattr(args, "workday_hours", None) or 3.0)
-    return hours_by_type
+    """日タイプごとの1日の持ち時間。"""
+    return _capacity(settings, args)[0]
 
 
 def cmd_plan(args):
@@ -589,7 +636,9 @@ def cmd_plan(args):
         return 0
 
     until = datetime.strptime(args.until, "%Y-%m-%d").date()
-    hours_by_type = _capacity_hours(settings, args)
+    hours_by_type, capacity_notes = _capacity(settings, args)
+    for note in capacity_notes:
+        print(note)
 
     day_types = settings.get("day_types", {})
     load = _habit_load(settings, args.window)
@@ -914,7 +963,7 @@ def cmd_daily(args):
     print()
     board_args = argparse.Namespace(tasks=None, save=True, date=date,
                                     until=None, window=14,
-                                    hours=8.0, workday_hours=3.0,
+                                    hours=None, workday_hours=None,
                                     quiet_when_empty=True)
     return cmd_board(board_args) or failed
 
@@ -1095,9 +1144,10 @@ def build_parser():
     board_cmd.add_argument("--until", help="この日までの需要と供給も出す YYYY-MM-DD")
     board_cmd.add_argument("--save", action="store_true", help="その日の残量を残す")
     board_cmd.add_argument("--date", help="保存する日付 YYYY-MM-DD / today / yesterday")
-    board_cmd.add_argument("--hours", type=float, default=8.0)
-    board_cmd.add_argument("--workday-hours", type=float, default=3.0)
-    board_cmd.add_argument("--window", type=int, default=14)
+    board_cmd.add_argument("--hours", type=float)
+    board_cmd.add_argument("--workday-hours", type=float)
+    board_cmd.add_argument("--window", type=int, default=14,
+                           help="習慣と生活時間の1日平均を出す窓の日数（既定 14）")
     board_cmd.set_defaults(func=cmd_board)
 
     report_cmd = sub.add_parser("report", help="1日の測定結果を HTML にして開く")
@@ -1121,12 +1171,12 @@ def build_parser():
     plan_cmd = sub.add_parser("plan", help="タスク一覧を週の容量へ割り付ける")
     plan_cmd.add_argument("--tasks", type=Path, help="別のタスク定義を使う")
     plan_cmd.add_argument("--until", required=True, help="いつまでに YYYY-MM-DD")
-    plan_cmd.add_argument("--hours", type=float, default=8.0,
-                          help="平日・休日の1日の持ち時間（暦）")
-    plan_cmd.add_argument("--workday-hours", type=float, default=3.0,
-                          help="出社日の1日の持ち時間（暦）")
+    plan_cmd.add_argument("--hours", type=float,
+                          help="平日・休日の1日の持ち時間（暦）。既定は生活時間の実測、無ければ 8")
+    plan_cmd.add_argument("--workday-hours", type=float,
+                          help="出社日の1日の持ち時間（暦）。既定は生活時間の実測、無ければ 3")
     plan_cmd.add_argument("--window", type=int, default=14,
-                          help="習慣の1日平均を出す窓の日数（既定 14）")
+                          help="習慣と生活時間の1日平均を出す窓の日数（既定 14）")
     plan_cmd.set_defaults(func=cmd_plan)
 
     coverage = sub.add_parser("coverage", help="所要時間DBの中身")
