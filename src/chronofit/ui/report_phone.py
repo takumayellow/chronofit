@@ -46,6 +46,10 @@ def _night(summary):
         note = "PC もスマホも触っていない夜の最長区間"
     if summary.get("bed"):
         note += f"（次は {_clock(summary['bed'])} 就寝）"
+    if summary.get("nap_sec"):
+        note += f"。ほかに二度寝 {_hours(summary['nap_sec'])}"
+    for warning in summary.get("sleep_warnings") or []:
+        note += f"。注意: {warning}"
     return note
 
 

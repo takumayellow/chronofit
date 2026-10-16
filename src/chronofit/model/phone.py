@@ -20,6 +20,12 @@ SLEEP_DEFAULTS = {
     "min_hours": 3.0,           # これより短い無操作は睡眠にしない（仮眠・外出と区別できない）
     "bridge_minutes": 15.0,     # 夜中にこれ以下だけスマホを触っても、睡眠を2つに割らない
     "bridge_min_gap_hours": 1.0,  # 割らずにつなぐのは、両側がこれ以上の無操作のときだけ
+    # 二度寝: 起きてからこの時間内に始まり、これ以上続いた家での無操作
+    "nap_within_hours": 3.0,
+    "nap_min_minutes": 30.0,
+    # 注意を出す目安。1晩がこれより短い、または就寝がこの時刻より遅い
+    "warn_short_hours": 6.0,
+    "warn_late_bed": "01:00",
 }
 
 _OPENERS = {"KEYGUARD_HIDDEN", "ACTIVITY_RESUMED"}
@@ -353,13 +359,71 @@ def detect_sleep(day, activity, covered, settings=None):
     return {"start": best["start"], "end": best["end"], "sec": best["sec"]}
 
 
+def detect_naps(night, activity, covered, outside=None, settings=None, present=()):
+    """1晩の後の二度寝（朝食などで一度起きてから、また寝た時間）。
+
+    起床（`night` の終わり）から `nap_within_hours` の間に始まり、`nap_min_minutes` 以上
+    続いた PC もスマホも触っていない区間を拾う。夜の時間帯の終わりより後は見ない。
+    家の外にいた時間（`outside`）に重なる区間は、授業や移動なので数えない。
+    `outside` が None（位置が分からない日）は、外出と区別できないので何も出さない。
+    `present`（PC の在席区間）は除く。PC の前で動画を流していた時間などは、夜と違って
+    二度寝に数えない。
+    間に `bridge_minutes` 以下だけ触った区間はつなぐ（目覚ましを止めただけ等）。
+
+    スマホを置いて起きていた時間（身支度・食事）とは区別が付かないので、候補として出す。
+    """
+    if not night or outside is None:
+        return []
+    options = {**SLEEP_DEFAULTS, **(settings or {})}
+    start = night["end"]
+    _, finish = night_window(start.date(), options)
+    latest = start + timedelta(hours=float(options["nap_within_hours"]))
+    busy = _merge(_intersect(activity, [(start, finish)]))
+    edges = [start] + [t for span in busy for t in span] + [finish]
+    # 終わりが時間帯の端の区間は、起きた手応え（操作）が無いので二度寝と言えない。
+    gaps = [(a, b) for a, b in zip(edges[::2], edges[1::2]) if a < b < finish]
+    bridge = timedelta(minutes=float(options["bridge_minutes"]))
+    runs = []
+    for gap in gaps:
+        if runs and gap[0] - runs[-1][1] <= bridge:
+            runs[-1] = (runs[-1][0], gap[1])
+        else:
+            runs.append(gap)
+    runs = _subtract(runs, _merge(present))
+    least = float(options["nap_min_minutes"]) * 60
+    outside = _merge(outside)
+    return [(a, b) for a, b in runs
+            if a <= latest and _total([(a, b)]) >= least and _inside((a, b), covered)
+            and not _intersect([(a, b)], outside)]
+
+
+def _since_noon(moment):
+    """前の日の正午から数えた時間。日付をまたぐ就寝の早い・遅いを比べるため。"""
+    return ((moment.hour - 12) % 24) * 60 + moment.minute
+
+
+def warnings(night, usage=(), settings=None):
+    """1晩についての注意。短すぎる睡眠と、遅すぎる就寝。"""
+    if not night:
+        return []
+    options = {**SLEEP_DEFAULTS, **(settings or {})}
+    notes = []
+    hours = night_sec(night, usage) / 3600
+    if hours < float(options["warn_short_hours"]):
+        notes.append(f"前の夜の睡眠 {hours:.1f}h は {float(options['warn_short_hours']):g}h より短い")
+    late = _clock(options["warn_late_bed"], time(1))
+    if _since_noon(night["start"]) > _since_noon(late):
+        notes.append(f"就寝 {night['start']:%H:%M} は {late:%H:%M} より遅い")
+    return notes
+
+
 def wake_and_bed(night_before, night_after):
     """その日の起床（前の夜の終わり）と就寝（次の夜の始まり）。"""
     return {"wake": night_before["end"] if night_before else None,
             "bed": night_after["start"] if night_after else None}
 
 
-def annotate(summary, sleeps, usage, categories, bounds=None):
+def annotate(summary, sleeps, usage, categories, bounds=None, naps=()):
     """1日の要約に、睡眠・スマホの使用・カテゴリ別の時間を足す。
 
     `usage` はその日に切り詰めたスマホの使用区間。スマホの記録が1つも無い日は
@@ -368,6 +432,9 @@ def annotate(summary, sleeps, usage, categories, bounds=None):
     `bounds`（その日の 0 時〜翌 0 時）があれば、睡眠はその日に入る全部を数える。
     PC が無入力のまま「在席」と判定された時間も、寝ていれば睡眠になる。
     離席から引くのは、離席と重なった睡眠だけ。
+
+    `naps`（二度寝の区間）は `sleep_sec` には入れず `nap_sec` として別に持つ。離席の
+    内訳（`away_awake_sec` と各ブロックの `sleep_sec`）では睡眠として引く。
     """
     if not sleeps and not usage and not categories:
         return summary
@@ -384,6 +451,13 @@ def annotate(summary, sleeps, usage, categories, bounds=None):
 
     away_sleep, phone_away = split(away)
     summary["sleep_sec"] = split([bounds])[0] if bounds else away_sleep
+    naps = _subtract(_merge(naps), asleep)
+    nap_spans = _intersect(naps, [bounds]) if bounds else naps
+    # 1日の sleep_sec は二度寝を含まないが、各ブロックの sleep_sec は含む（離席の内訳だから）
+    summary["nap_spans"] = nap_spans
+    summary["nap_sec"] = _total(nap_spans) - _total(_intersect(nap_spans, usage))
+    asleep = _merge(asleep + naps)
+    away_sleep = split(away)[0]
     summary["away_awake_sec"] = max(0.0, summary.get("away_sec", 0.0) - away_sleep)
     summary["phone_sec"] = _total(usage)
     summary["phone_away_sec"] = phone_away
@@ -399,12 +473,16 @@ def format_lines(summary):
     if "sleep_sec" not in summary:
         return []
     wake, bed = summary.get("wake"), summary.get("bed")
-    lines = [f"  睡眠 {summary['sleep_sec'] / 3600:.1f}h"
+    nap = summary.get("nap_sec") or 0.0
+    naps = f"  二度寝 {nap / 3600:.1f}h" if nap else ""
+    lines = [f"  睡眠 {summary['sleep_sec'] / 3600:.1f}h{naps}"
              f"  離席(睡眠を除く) {summary['away_awake_sec'] / 3600:.1f}h"
              f"  スマホ {summary['phone_sec'] / 3600:.1f}h"
              f"（離席中 {summary['phone_away_sec'] / 3600:.1f}h）"
              f"  起床 {f'{wake:%H:%M}' if wake else '―'}"
              f"  就寝 {f'{bed:%m/%d %H:%M}' if bed else '―'}"]
+    for note in summary.get("sleep_warnings") or []:
+        lines.append(f"  注意: {note}")
     if summary.get("phone_categories"):
         lines.append("    " + " / ".join(f"{name} {sec / 60:.0f}分"
                                          for name, sec in summary["phone_categories"].items()))

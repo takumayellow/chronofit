@@ -68,7 +68,7 @@ def _pc_activity(day):
     return spans
 
 
-def annotate_summary(summary, date, settings=None, bounds=None):
+def annotate_summary(summary, date, settings=None, bounds=None, outside=None):
     """1日の要約に、睡眠・スマホの使用・カテゴリ別の時間・起床と就寝を足す。
 
     スマホのイベントが1つも無い日は何も足さない。`bounds` は生活の1日の区間で、
@@ -78,6 +78,9 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     自動で動かしているアプリ（設定の `automated`）の前面時間は人の操作に数えず、
     `phone_auto_sec` として別に持つ。画面を点けたまま置いておくアプリ（設定の `ignored`）の
     前面時間は人の操作に数えず、どこにも出さない。
+
+    朝の1晩の後の二度寝は `nap_sec` として別に持つ。`outside`（家の外にいた区間）に
+    重なる無操作は二度寝にしない。`outside` が None（位置が分からない）なら二度寝は出さない。
     """
     options = config.phone(settings)
     root = paths.phone_dir()
@@ -98,6 +101,10 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     tonight = phone_model.detect_sleep(day + timedelta(days=1), activity, covered, sleep_settings)
     last_night = phone_model.detect_sleep(day, activity, covered, sleep_settings)
     sleeps = [s for s in (last_night, tonight) if s]
+    present = [(s["start"], s["end"]) for s in summary.get("segments") or []
+               if s.get("kind") != "away"]
+    naps = phone_model.detect_naps(last_night, activity, covered, outside, sleep_settings,
+                                   present=present)
     apps = phone_model.app_seconds(events, start, end, until=now)
     for package in not_human:
         apps.pop(package, None)
@@ -105,7 +112,8 @@ def annotate_summary(summary, date, settings=None, bounds=None):
     played = phone_model.media_seconds(events, media.load(day.isoformat(), root),
                                        start, end, until=now)
     day_usage = phone_model.clip(usage, start, end)
-    phone_model.annotate(summary, sleeps, day_usage, categories, bounds=(start, end))
+    phone_model.annotate(summary, sleeps, day_usage, categories, bounds=(start, end),
+                         naps=naps)
     if categories:
         # アプリ名・タイトルはページにだけ出す。rollup（共有できる形）には入れない
         summary["phone_apps"] = phone_model.app_breakdown(
@@ -115,6 +123,8 @@ def annotate_summary(summary, date, settings=None, bounds=None):
             summary["sleep_sec"] = phone_model.night_sec(last_night, usage)
         summary.update(phone_model.wake_and_bed(last_night, tonight))
         summary["sleep_spans"] = [(s["start"], s["end"]) for s in sleeps]
+        summary["slept_at"] = last_night["start"] if last_night else None
+        summary["sleep_warnings"] = phone_model.warnings(last_night, usage, sleep_settings)
         summary["phone_spans"] = day_usage
         summary["auto_spans"] = phone_model.clip(auto, start, end)
         summary["phone_auto_sec"] = sum((b - a).total_seconds()

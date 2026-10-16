@@ -234,3 +234,15 @@ def test_日付でない名前のファイルはpurgeで触らない(tmp_path):
     (tmp_path / "backup.json").write_text('[{"lat": 1}]', encoding="utf-8")
     assert location.purge(tmp_path, date(2026, 9, 27), retention_days=0) == 0
     assert "lat" in (tmp_path / "backup.json").read_text(encoding="utf-8")
+
+
+def test_家の外にいた区間は短い揺れを除いて出す():
+    places = [{"name": "家", "lat": 0, "lng": 0, "home": True}, {"name": "学校", "lat": 1, "lng": 1}]
+    stays = [{"start": "2026-01-05T07:00:00+09:00", "end": "2026-01-05T09:00:00+09:00", "place": "家"},
+             {"start": "2026-01-05T09:00:00+09:00", "end": "2026-01-05T09:02:00+09:00", "place": location.MOVING},
+             {"start": "2026-01-05T09:02:00+09:00", "end": "2026-01-05T09:30:00+09:00", "place": location.MOVING},
+             {"start": "2026-01-05T09:30:00+09:00", "end": "2026-01-05T12:00:00+09:00", "place": "学校"}]
+    spans = location.outside(stays, places)
+    assert [(a.hour, a.minute, b.hour, b.minute) for a, b in spans] == [(9, 2, 9, 30), (9, 30, 12, 0)]
+    assert location.outside(stays, [{"name": "家", "lat": 0, "lng": 0}]) is None
+    assert location.outside([], places) is None
