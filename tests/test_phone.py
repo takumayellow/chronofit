@@ -384,9 +384,42 @@ class Test二度寝:
         assert naps == [(at(7, 40), at(9, 10))]
 
     def test_目覚ましを止めただけの短い操作ではつなぐ(self):
-        activity = [(at(7, 30), at(7, 38)), (at(8, 20), at(8, 28)), (at(9, 15), at(9, 20))]
+        activity = [(at(7, 30), at(7, 38)), (at(8, 20), at(8, 21)), (at(9, 15), at(9, 20))]
         naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [])
         assert naps == [(at(7, 38), at(9, 15))]
+
+    def test_しばらく触っていた所では割る(self):
+        activity = [(at(7, 30), at(7, 40)), (at(7, 41), at(7, 50)), (at(7, 52), at(8, 3)),
+                    (at(9, 35), at(9, 40))]
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [])
+        assert naps == [(at(8, 3), at(9, 35))]
+
+    def test_起きてすぐの食事の無操作は数えず_その後に寝た分を拾う(self):
+        # 食事から戻ってしばらく触る間も、数十秒おきに途切れる
+        activity = [(at(7, 30), at(7, 38)), (at(8, 21), at(8, 23)),
+                    (at(8, 23, second=20), at(8, 28)), (at(9, 16), at(9, 17)),
+                    (at(9, 30), at(9, 31))]
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [])
+        assert naps == [(at(8, 28), at(9, 30))]
+
+    def test_二度寝になり得ない後の無操作では食事とみなさない(self):
+        later = [(at(7, 30), at(7, 45)), (at(8, 15), at(11)), (at(11, 40), at(14))]
+        assert phone_model.detect_naps(self.NIGHT, later, self.COVERED, []) == [
+            (at(7, 45), at(8, 15))]   # 11:00 からは起きてから遅すぎる
+        away = [(at(7, 30), at(7, 45)), (at(8, 15), at(9)), (at(9, 40), at(9, 45))]
+        assert phone_model.detect_naps(self.NIGHT, away, self.COVERED, [(at(9), at(9, 40))]) == [
+            (at(7, 45), at(8, 15))]   # 9:00 からは家の外
+
+    def test_PCの在席で割れた二度寝は食事とみなさない(self):
+        activity = [(at(7, 30), at(7, 40)), (at(9, 30), at(9, 35))]
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [],
+                                       present=[(at(8, 30), at(8, 50))])
+        assert naps == [(at(7, 40), at(8, 30)), (at(8, 50), at(9, 30))]
+
+    def test_起きてしばらく後の無操作は食事とみなさない(self):
+        activity = [(at(7, 30), at(8, 45)), (at(9, 20), at(9, 25)), (at(10, 30), at(11))]
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [])
+        assert naps == [(at(8, 45), at(9, 20)), (at(9, 25), at(10, 30))]
 
     def test_短すぎる無操作と起きてから遅すぎる無操作は数えない(self):
         activity = [(at(7, 30), at(8)), (at(8, 20), at(11)), (at(11, 40), at(14))]
