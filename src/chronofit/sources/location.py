@@ -317,6 +317,24 @@ def annotate(summary, stays):
     return summary
 
 
+def outside(stays, places, min_sec=300):
+    """家の外にいた区間。家が登録されていないか滞在の記録が無ければ、分からないので None。
+
+    `min_sec` より短い滞在は家の中でも座標が揺れて出るので数えない。
+    """
+    homes = {place["name"] for place in places or [] if place.get("home")}
+    if not homes or not stays:
+        return None
+    spans = []
+    for stay in stays:
+        start, end = _parse_time(stay.get("start")), _parse_time(stay.get("end"))
+        if not start or not end:
+            continue
+        if stay.get("place") not in homes and (end - start).total_seconds() >= min_sec:
+            spans.append((start, end))
+    return sorted(spans)
+
+
 def suggest(block, places):
     """ブロックの大半を1か所で過ごし、その場所に `away_label` があればそれを返す。"""
     parts = block.get("places") or []

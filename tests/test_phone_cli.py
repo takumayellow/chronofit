@@ -59,6 +59,21 @@ def test_rollupに睡眠とスマホとカテゴリだけが出る(tmp_path, mon
     assert "com.example" not in written            # アプリ名は共有の粒度に出さない
 
 
+def test_次の日を畳むと前の日のrollupに就寝が入る(tmp_path, monkeypatch):
+    home = _setup(tmp_path, monkeypatch)
+    rollup = home / "rollup"
+    rollup.mkdir(parents=True)
+    previous = rollup / "2026-09-26.json"
+    previous.write_text(json.dumps({"date": "2026-09-26", "sleep_sec": 0.0}), encoding="utf-8")
+    untouched = {"date": "2026-09-26"}   # スマホの記録が無い日の行には足さない
+    assert cli.main(["rollup", "--date", "2026-09-27"]) == 0
+    assert json.loads(previous.read_text(encoding="utf-8"))["bed"].startswith(
+        "2026-09-26T23:50:00")
+    previous.write_text(json.dumps(untouched), encoding="utf-8")
+    assert cli.main(["rollup", "--date", "2026-09-27"]) == 0
+    assert json.loads(previous.read_text(encoding="utf-8")) == untouched
+
+
 def test_記録が夜を覆っていなければ睡眠は出さずスマホだけ出す(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch, pulled=False)
     summary = cli._load_summary("2026-09-27")

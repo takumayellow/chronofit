@@ -372,3 +372,79 @@ def test_1晩の睡眠は夜中に触った時間を除く():
     night = {"start": at(0), "end": at(7), "sec": 7 * 3600.0}
     assert phone_model.night_sec(night, [(at(3), at(3, 10))]) == 7 * 3600 - 600
     assert phone_model.night_sec(None, []) == 0.0
+
+
+class Test二度寝:
+    NIGHT = {"start": at(0, 30), "end": at(7, 30), "sec": 7 * 3600.0}
+    COVERED = [(at(20, day=26), at(14))]
+
+    def test_起きてから少しして戻った無操作を拾う(self):
+        activity = [(at(7, 30), at(7, 40)), (at(9, 10), at(9, 20))]
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [])
+        assert naps == [(at(7, 40), at(9, 10))]
+
+    def test_目覚ましを止めただけの短い操作ではつなぐ(self):
+        activity = [(at(7, 30), at(7, 38)), (at(8, 20), at(8, 28)), (at(9, 15), at(9, 20))]
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [])
+        assert naps == [(at(7, 38), at(9, 15))]
+
+    def test_短すぎる無操作と起きてから遅すぎる無操作は数えない(self):
+        activity = [(at(7, 30), at(8)), (at(8, 20), at(11)), (at(11, 40), at(14))]
+        assert phone_model.detect_naps(self.NIGHT, activity, self.COVERED, []) == []
+
+    def test_家の外にいた間は数えない(self):
+        activity = [(at(7, 30), at(7, 40)), (at(9, 10), at(9, 20))]
+        outside = [(at(8), at(8, 30))]
+        assert phone_model.detect_naps(self.NIGHT, activity, self.COVERED, outside) == []
+
+    def test_スマホの記録の外と夜が無い日は数えない(self):
+        activity = [(at(7, 30), at(7, 40)), (at(9, 10), at(9, 20))]
+        assert phone_model.detect_naps(self.NIGHT, activity, [(at(20, day=26), at(8))], []) == []
+        assert phone_model.detect_naps(None, activity, self.COVERED, []) == []
+
+    def test_PCの前にいた時間は二度寝に数えない(self):
+        activity = [(at(7, 30), at(7, 40)), (at(10), at(10, 10))]
+        present = [(at(9, 10), at(9, 40)), (at(9, 41), at(9, 55))]   # 無入力の在席
+        naps = phone_model.detect_naps(self.NIGHT, activity, self.COVERED, [], present=present)
+        assert naps == [(at(7, 40), at(9, 10))]   # 在席の間の短い切れ端は落とす
+
+    def test_位置が分からない日は外出と区別できないので数えない(self):
+        activity = [(at(7, 30), at(7, 40)), (at(9, 10), at(9, 20))]
+        assert phone_model.detect_naps(self.NIGHT, activity, self.COVERED, None) == []
+
+    def test_二度寝は睡眠と分けて持ち_離席からは引く(self):
+        summary = _summary()
+        sleeps = [{"start": at(23, day=26), "end": at(7), "sec": 8 * 3600}]
+        naps = [(at(7, 30), at(8, 30))]
+        phone_model.annotate(summary, sleeps, [(at(8), at(8, 10))], {},
+                             bounds=(at(0), at(0, day=28)), naps=naps)
+        assert summary["sleep_sec"] == 7 * 3600
+        assert summary["nap_sec"] == 50 * 60
+        assert summary["away_awake_sec"] == 10 * 3600 - 7 * 3600 - 50 * 60
+        assert summary["away_blocks"][0]["sleep_sec"] == 7 * 3600 + 50 * 60
+
+    def test_rollupの行に二度寝を出す(self):
+        summary = {"sleep_sec": 7 * 3600.0, "nap_sec": 3600.0, "away_awake_sec": 0.0,
+                   "phone_sec": 0.0, "phone_away_sec": 0.0,
+                   "sleep_warnings": ["前の夜の睡眠 5.0h は 6h より短い"]}
+        lines = phone_model.format_lines(summary)
+        assert "二度寝 1.0h" in lines[0]
+        assert lines[1] == "  注意: 前の夜の睡眠 5.0h は 6h より短い"
+
+
+class Test睡眠の注意:
+    def test_短い夜と遅い就寝を知らせる(self):
+        night = {"start": at(2, 34), "end": at(7, 30), "sec": 0.0}
+        assert phone_model.warnings(night) == ["前の夜の睡眠 4.9h は 6h より短い",
+                                               "就寝 02:34 は 01:00 より遅い"]
+
+    def test_日付が変わる前の就寝は遅くない(self):
+        night = {"start": at(23, 30, day=26), "end": at(7, 30), "sec": 0.0}
+        assert phone_model.warnings(night) == []
+
+    def test_目安は設定で変えられる(self):
+        night = {"start": at(0, 30), "end": at(7, 30), "sec": 0.0}
+        settings = {"warn_short_hours": 8, "warn_late_bed": "00:00"}
+        assert phone_model.warnings(night, settings=settings) == [
+            "前の夜の睡眠 7.0h は 8h より短い", "就寝 00:30 は 00:00 より遅い"]
+        assert phone_model.warnings(None) == []

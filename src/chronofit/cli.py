@@ -228,7 +228,8 @@ def _load_summary(date, bounds=None, settings=None):
     stays = location.merge_sources(location.stays_around(days[-1], root, places), tracked)
     location.annotate(summary, stays)
     # 睡眠とスマホはスマホのイベントがある日にだけ付く
-    return cli_phone.annotate_summary(summary, date, settings, bounds=bounds)
+    return cli_phone.annotate_summary(summary, date, settings, bounds=bounds,
+                                      outside=location.outside(stays, places))
 
 
 def cmd_rollup(args):
@@ -259,14 +260,38 @@ def cmd_rollup(args):
                          **_phone_fields(b, ("sleep_sec", "phone_sec"))}
                         for b in summary["away_blocks"]],
         # 睡眠とスマホは秒とカテゴリだけ。アプリ名はここへ出さない。
-        **_phone_fields(summary, ("sleep_sec", "away_awake_sec", "phone_sec",
+        **_phone_fields(summary, ("sleep_sec", "nap_sec", "away_awake_sec", "phone_sec",
                                   "phone_away_sec", "phone_categories", "wake", "bed")),
     }
     destination = paths.ensure(paths.rollup_dir()) / f"{date}.json"
     destination.write_text(json.dumps(shareable, ensure_ascii=False, indent=2) + "\n",
                            encoding="utf-8")
     print(f"-> {destination}")
+    _backfill_bed(date, summary.get("slept_at"))
     return 0
+
+
+def _backfill_bed(date, slept_at):
+    """前の日の rollup に就寝を書き足す。
+
+    就寝はその夜が明けるまで決まらないので、前の日を畳んだ時点（夜中）では空になる。
+    次の日を畳んだときに分かった「前の夜に寝た時刻」を、前の日の `bed` として入れる。
+    """
+    if not slept_at:
+        return
+    previous = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    path = paths.rollup_dir() / f"{previous}.json"
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(row, dict) or "sleep_sec" not in row:
+        return
+    bed = slept_at.isoformat(timespec="seconds")
+    if row.get("bed") == bed:
+        return
+    row["bed"] = bed
+    path.write_text(json.dumps(row, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _phone_fields(source, keys):
